@@ -1,0 +1,30 @@
+{
+  "name": "common-context-mcp",
+  "version": "1.0.0",
+  "description": "Shared context MCP for AI agents - append-only, zero config, auto-detect",
+  "main": "dist/index.js",
+  "bin": {
+    "common-context-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build",
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "keywords": ["mcp", "shared-context", "agent-memory", "ai", "common-context"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.0.0"
+  },
+  "files": ["dist/", "scripts/", "README.md"],
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
