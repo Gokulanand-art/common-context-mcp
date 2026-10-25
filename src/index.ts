@@ -1,8 +1,9 @@
 #!/usr/bin/env node
+import { log } from "./log.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer, VERSION } from "./server.js";
 import { loadConfig } from "./config.js";
-import { runDoctor } from "./doctor.js";
+import { runDoctor, runTokenReport } from "./doctor.js";
 import { runHook } from "./hooks.js";
 
 const HELP = `common-context-mcp ${VERSION}
@@ -12,6 +13,7 @@ Usage:
   common-context-mcp            Start the MCP server on stdio (what agents run)
   common-context-mcp --version  Print the version
   common-context-mcp doctor     Check the environment and store health
+  common-context-mcp doctor --tokens   Estimated tokens the agents see
   common-context-mcp hook <ev>  Claude Code hook handler (reads event JSON on stdin)
   common-context-mcp --help     Print this help
   common-context-mcp-setup      Register the server with detected AI agents
@@ -30,6 +32,9 @@ if (arg === "--version" || arg === "-v") {
   process.stdout.write(`${VERSION}\n`);
   process.exit(0);
 }
+if (arg === "doctor" && process.argv.includes("--tokens")) {
+  process.exit(runTokenReport());
+}
 if (arg === "doctor") {
   process.exit(runDoctor());
 }
@@ -44,18 +49,18 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
 
   const shutdown = (signal: string) => {
-    process.stderr.write(`[common-context] ${signal} received, shutting down\n`);
+    log.info(`${signal} received, shutting down`);
     server.close().finally(() => process.exit(0));
   };
   process.once("SIGINT", () => shutdown("SIGINT"));
   process.once("SIGTERM", () => shutdown("SIGTERM"));
   process.on("uncaughtException", err => {
-    process.stderr.write(`[common-context] fatal: ${err.stack ?? err.message}\n`);
+    log.error(`fatal: ${err.stack ?? err.message}`);
     process.exit(1);
   });
 
   await server.connect(transport);
-  process.stderr.write(`[common-context] ${VERSION} running on stdio (store: ${config.file})\n`);
+  log.info(`${VERSION} running on stdio (store: ${config.file})`);
 }
 
 if (arg === "hook") {
@@ -63,7 +68,7 @@ if (arg === "hook") {
   runHook(process.argv[3]).then(() => process.exit(0));
 } else {
   main().catch(err => {
-    process.stderr.write(`[common-context] fatal: ${err instanceof Error ? err.message : String(err)}\n`);
+    log.error(`fatal: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   });
 }

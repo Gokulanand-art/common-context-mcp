@@ -77,6 +77,26 @@ common-context-mcp doctor
 
 Checks the Node version, that the binary is on PATH, that the store directory is writable, that the store can be read and locked, whether any sessions are interrupted, and whether an agent is registered. Exits non-zero if a required check fails.
 
+## Token use
+
+The agents see three fixed texts on every session: the server instructions, the protocol block in each agent's rules file, and the tool descriptions. Each message adds a short protocol reminder after the first one in a session. `load_context` returns a brief view by default, held to a character budget.
+
+Check what each part costs on your machine:
+
+```bash
+common-context-mcp doctor --tokens
+```
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `CONTEXT_MCP_LOAD_BUDGET_CHARS` | `6000` | Most characters the brief `load_context` view may produce. |
+| `CONTEXT_MCP_ARCHIVE_SESSIONS` | `100` | Completed sessions kept in the store. Older ones move to `<store>.archive.jsonl`. |
+| `CONTEXT_MCP_ARCHIVE_DAYS` | `30` | Completed sessions older than this move to the archive. |
+| `CONTEXT_MCP_LOG_LEVEL` | `warn` | `error`, `warn`, `info` or `debug`. |
+| `CONTEXT_MCP_LOG` | `text` | `text` or `json` log lines on stderr. |
+
+Ask for everything with `load_context` and `detail: "full"`. Nothing is deleted when items are archived; `get_audit_trail` and `search_context` still reach them.
+
 ## The protocol agents follow
 
 The server sends these instructions to every connected agent:

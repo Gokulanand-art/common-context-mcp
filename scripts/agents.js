@@ -34,17 +34,18 @@ const PROTOCOL_FILE = path.join(HOME, ".config", "common-context", "PROTOCOL.md"
 const codexHome = () => (process.env.CODEX_HOME && process.env.CODEX_HOME.trim()) || path.join(HOME, ".codex");
 
 /** The rules every selected agent follows. Tool names may be prefixed by the agent. */
-const PROTOCOL = `## common-context protocol
+const PROTOCOL = `## common-context protocol (mandatory)
 
-This machine shares one context store between AI agents through the \`common-context\` MCP server. This is mandatory and applies to every model and every agent with this server installed. Follow these rules for every user message, with no exceptions:
+This machine shares one context store across AI agents through the \`common-context\` MCP server. Every model and agent with it installed follows this on every message, including greetings:
 
-1. Before any other tool call or any reply for a message, call \`load_context\` (first message of a session) or \`search_context\`. Do this on every message, not only the first, including greetings and one-word messages such as \"hi\".
-2. After each meaningful step, call \`save_context\` with a key and value. This is your checkpoint. Any work for a message must be checkpointed before the summary.
-3. When something fails, call \`save_failure\` with what failed and why. Then call \`search_context\` for related records before trying an alternative approach.
-4. Before a shared file is edited, call \`claim_area\`. Call \`release_area\` when done.
-5. Before your final answer, call \`save_context\` to write the final state to the store, then call \`save_summary\` with \`accomplished\`, \`learned\`, \`decisions\` and \`next_steps\`. Give the final answer only after both succeed.
+1. Before any other tool call or reply: \`load_context\` (first message of a session) or \`search_context\`.
+2. After each meaningful step: \`save_context\` (the checkpoint).
+3. On a failure: \`save_failure\`, then \`search_context\` before any alternative.
+4. Before editing a shared file: \`claim_area\`; \`release_area\` when done.
+5. Before the final answer: \`save_context\` with the final state, then \`save_summary\` (accomplished, learned, decisions, next_steps). Answer only after both succeed.
 
-If the \`common-context\` tools are unavailable, say so and continue without them.`;
+If the \`common-context\` tools are unavailable, say so and continue.
+`;
 
 // ─── helpers ──────────────────────────────────────────────────────────
 

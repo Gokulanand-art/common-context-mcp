@@ -1,3 +1,4 @@
+import { log } from "./log.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Config } from "./config.js";
@@ -194,9 +195,7 @@ export class ContextStore {
       if (e instanceof StoreError) throw e;
       const backup = `${this.cfg.file}.corrupt-${Date.now()}`;
       fs.copyFileSync(this.cfg.file, backup);
-      process.stderr.write(
-        `[common-context] store was unreadable (${(e as Error).message}); copied to ${backup} and starting fresh\n`
-      );
+      log.warn(`store was unreadable (${(e as Error).message}); copied to ${backup} and starting fresh`);
       return emptyData();
     }
   }
@@ -244,4 +243,40 @@ export class ContextStore {
       // already gone; nothing to do
     }
   }
+}
+
+const FAILURE_KEEP = 200;
+
+/**
+ * Moves old items out of the live store so it stays small. Completed sessions beyond the newest
+ * `keepSessions`, or older than `days`, and failures beyond the newest FAILURE_KEEP are removed from
+ * `d` and returned. Nothing is lost: the caller appends them to the archive file. The current session
+ * and any session still open are never moved.
+ */
+export function splitArchive(
+  d: ContextData,
+  opts: { keepSessions: number; days: number; keepId: string | null; now: number }
+): { sessions: SessionEntry[]; failures: FailureEntry[] } {
+  const cutoff = opts.now - opts.days * 86_400_000;
+  const completed = d.sessions.filter(s => s.status === "completed" && s.id !== opts.keepId);
+  const newest = new Set(completed.slice(-opts.keepSessions).map(s => s.id));
+  const moveSessions = completed.filter(s => !newest.has(s.id) || Date.parse(s.timestamp) < cutoff);
+  const moveIds = new Set(moveSessions.map(s => s.id));
+  const sessions = moveSessions;
+  d.sessions = d.sessions.filter(s => !moveIds.has(s.id));
+
+  const failures = d.failures.length > FAILURE_KEEP ? d.failures.slice(0, d.failures.length - FAILURE_KEEP) : [];
+  d.failures = d.failures.slice(d.failures.length - Math.min(d.failures.length, FAILURE_KEEP));
+  return { sessions, failures };
+}
+
+/** Appends archived items to the archive file, one JSON object per line. Called under the store lock. */
+export function appendArchive(storeFile: string, sessions: SessionEntry[], failures: FailureEntry[]): void {
+  if (sessions.length === 0 && failures.length === 0) return;
+  const file = `${storeFile}.archive.jsonl`;
+  const lines = [
+    ...sessions.map(s => JSON.stringify({ kind: "session", archived: new Date().toISOString(), item: s })),
+    ...failures.map(f => JSON.stringify({ kind: "failure", archived: new Date().toISOString(), item: f })),
+  ];
+  fs.appendFileSync(file, lines.join("\n") + "\n", { mode: 0o600 });
 }
