@@ -96,10 +96,45 @@ test("final answer is held until save_summary when work was done", () => {
   assert.equal(held.decision, "block");
   assert.match(held.reason, /save_summary/);
 
+  hook("PostToolUse", post(M + "save_context", { text: "Saved context: step" }));
   hook("PostToolUse", post(M + "save_summary", { text: "Session summary saved." }));
   const done = hook("Stop", {});
   assert.equal(done.decision, undefined);
   assert.match(done.systemMessage, /summary saved/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("work with no checkpoint is held until save_context runs, even after a summary", () => {
+  const { dir, hook } = setup();
+  hook("UserPromptSubmit", {});
+  hook("PostToolUse", post(M + "load_context", { text: "Your session: session-1" }));
+  hook("PostToolUse", post("Edit"));
+  hook("PostToolUse", post(M + "save_summary", { text: "Session summary saved." }));
+  const held = hook("Stop", {});
+  assert.equal(held.decision, "block");
+  assert.match(held.reason, /save_context/, "checkpoint is required before the summary is accepted");
+
+  hook("PostToolUse", post(M + "save_context", { text: "Saved context: step" }));
+  hook("PostToolUse", post(M + "save_summary", { text: "Session summary saved." }));
+  assert.equal(hook("Stop", {}).decision, undefined, "checkpoint then summary is allowed");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a summary saved before the checkpoint does not count, so the stop stays held", () => {
+  const { dir, hook } = setup();
+  hook("UserPromptSubmit", {});
+  hook("PostToolUse", post(M + "load_context", { text: "Your session: session-1" }));
+  hook("PostToolUse", post("Edit"));
+  hook("PostToolUse", post(M + "save_summary", { text: "Session summary saved." }));
+  assert.equal(hook("Stop", {}).decision, "block");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a message with no work needs no checkpoint and no summary", () => {
+  const { dir, hook } = setup();
+  hook("UserPromptSubmit", {});
+  hook("PostToolUse", post(M + "search_context", { text: "Found 0 results" }));
+  assert.equal(hook("Stop", {}).decision, undefined);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

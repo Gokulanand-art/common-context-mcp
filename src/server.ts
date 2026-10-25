@@ -23,6 +23,7 @@ const INSTRUCTIONS = `CRITICAL PROTOCOL — YOU MUST FOLLOW THIS EXACTLY:
    - This is your CHECKPOINT. If you get cut off, this is what survives.
    - Do NOT batch saves. Save frequently. Every decision, every fact, every config.
    - Call search_context() before any new approach to check if it was tried before.
+   - On EVERY new user message, call load_context() or search_context() first, before any other tool.
 
 3. ON ANY FAILURE: Call save_failure() IMMEDIATELY before trying alternatives.
    - Record what failed and why. Do not skip this.
@@ -31,8 +32,8 @@ const INSTRUCTIONS = `CRITICAL PROTOCOL — YOU MUST FOLLOW THIS EXACTLY:
 4. ON IMPORTANT DECISIONS: Call broadcast() to notify other agents.
    - Before editing a shared file, claim_area() it; release_area() when done.
 
-5. BEFORE FINISHING: Call save_summary() — THIS IS MANDATORY.
-   - Only then give your final summary to the user.
+5. BEFORE FINISHING: Call save_context() with the final state, then save_summary() — THIS IS MANDATORY.
+   - Only give your final answer after both succeed.
 
 6. IF YOU SENSE YOUR SESSION IS ENDING (token limit, user says stop, etc.):
    - Call save_summary() IMMEDIATELY with everything done so far.
