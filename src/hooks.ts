@@ -105,11 +105,14 @@ interface Input {
   stop_hook_active?: boolean;
   loop_count?: number;
   last_assistant_message?: string;
+  cwd?: string;
 }
 
 interface Ctx {
   sid: string;
   source: Source;
+  /** The project folder this event runs in. Its store is <cwd>/common-context.json. */
+  cwd: string;
 }
 
 const emptyState = (): State => ({
@@ -167,12 +170,17 @@ function writeState(sid: string, s: State): void {
 
 function storeFor(ctx: Ctx): ContextStore {
   // Records are attributed to the tool and session that caused them.
-  return new ContextStore(loadConfig({ ...process.env, CONTEXT_MCP_AGENT_ID: `${ctx.source}:${ctx.sid}` }));
+  // The store is the one in the folder this event runs in, not the folder the server was started from.
+  return new ContextStore(loadConfig({
+    ...process.env,
+    CONTEXT_MCP_PROJECT_DIR: ctx.cwd,
+    CONTEXT_MCP_AGENT_ID: `${ctx.source}:${ctx.sid}`,
+  }));
 }
 
 /** Input is normalised so every source looks the same to the handlers. */
 function ctxOf(input: Input, source: Source): Ctx {
-  return { sid: input.session_id ?? input.conversation_id ?? "unknown", source };
+  return { sid: input.session_id ?? input.conversation_id ?? "unknown", source, cwd: input.cwd || process.cwd() };
 }
 
 /** A failed tool result, or null. Covers Claude/Codex (is_error, exit_code), Gemini (error) and Cursor (tool_output). */

@@ -1,7 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { loadConfig, type Config } from "./config.js";
+import { loadConfig, STORE_FILE_NAME, type Config } from "./config.js";
 import {
   ContextStore,
   SCHEMA_VERSION,
@@ -73,9 +75,16 @@ function nextId(data: ContextData, prefix: string): string {
   return `${prefix}-${max + 1}`;
 }
 
-export function createServer(config: Config = loadConfig()): McpServer {
-  const store = new ContextStore(config);
-  const me = config.agentId;
+export function createServer(initial: Config = loadConfig()): McpServer {
+  // The store follows the project folder the agent is working in. The folder comes from the client's
+  // workspace roots before each tool call; without roots it is the folder the server started in.
+  // CONTEXT_MCP_FILE, when set, pins the store file and ignores folder changes.
+  const pinnedFile = Boolean(process.env.CONTEXT_MCP_FILE?.trim());
+  const launchDir = process.env.CONTEXT_MCP_PROJECT_DIR?.trim() || process.cwd();
+  let config: Config = initial;
+  let store = new ContextStore(config);
+  let projectDir: string | null = null;
+  const me = initial.agentId;
   const state = { loaded: false, completed: false, sessionId: null as string | null };
 
   const server = new McpServer(
@@ -101,6 +110,41 @@ export function createServer(config: Config = loadConfig()): McpServer {
     s.heartbeat = now();
   }
 
+  /** Points the store at a folder. A different folder starts a new session: the agent must load it again. */
+  function bindProject(dir: string): void {
+    if (dir === projectDir) return;
+    projectDir = dir;
+    config = { ...initial, file: path.join(dir, STORE_FILE_NAME) };
+    store = new ContextStore(config);
+    state.loaded = false;
+    state.completed = false;
+    state.sessionId = null;
+    process.stderr.write(`[common-context] project: ${dir} (store: ${config.file})\n`);
+  }
+
+  /** The first file:// workspace root the client reports, or null. */
+  async function clientRoot(): Promise<string | null> {
+    const caps = server.server.getClientCapabilities();
+    if (!caps?.roots) return null;
+    try {
+      const res = await Promise.race([
+        server.server.listRoots(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("roots/list timed out")), 2000)),
+      ]);
+      const root = res.roots.find(r => r.uri.startsWith("file://"));
+      return root ? fileURLToPath(root.uri) : null;
+    } catch (e) {
+      process.stderr.write(`[common-context] could not read roots: ${(e as Error).message}\n`);
+      return null;
+    }
+  }
+
+  /** Before every tool call: follow the project folder the client is in. */
+  async function syncProject(): Promise<void> {
+    if (pinnedFile) return;
+    bindProject((await clientRoot()) ?? launchDir);
+  }
+
   function register<S extends z.ZodRawShape>(
     name: string,
     description: string,
@@ -120,6 +164,7 @@ export function createServer(config: Config = loadConfig()): McpServer {
       // resolved inside this generic helper; the shape is validated by the SDK.
       (async (args: any): Promise<CallToolResult> => {
         try {
+          await syncProject();
           if (requiresLoad && !state.loaded) {
             return fail("ERROR: You must call load_context() first before using any other tool. This is MANDATORY.");
           }

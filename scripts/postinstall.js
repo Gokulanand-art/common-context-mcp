@@ -142,7 +142,7 @@ async function run(argv) {
 
   log("");
   log("common-context-mcp — tool setup");
-  log(`  Shared store: ${process.env.CONTEXT_MCP_FILE || path.join(HOME, ".shared-context.json")} (created on first use)`);
+  log("  Store: common-context.json in each project folder (created on first use)");
   log("");
 
   const detected = detectAgents();

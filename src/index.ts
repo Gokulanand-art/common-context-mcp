@@ -17,7 +17,8 @@ Usage:
   common-context-mcp-setup      Register the server with detected AI agents
 
 Environment:
-  CONTEXT_MCP_FILE              Store path (default ~/.shared-context.json)
+  CONTEXT_MCP_FILE              Store file (default: common-context.json in the project folder)
+  CONTEXT_MCP_PROJECT_DIR       Project folder whose common-context.json is used (default: working directory)
   CONTEXT_MCP_AGENT_ID          Stable agent identity (default: random per process)
   CONTEXT_MCP_STALE_MINUTES     Session considered dead after this many idle minutes (default 15)
   CONTEXT_MCP_CLAIM_MINUTES     Area claims expire after this many minutes (default 30)

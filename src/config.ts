@@ -26,8 +26,17 @@ function positiveNumber(name: string, raw: string | undefined, fallback: number)
   return n;
 }
 
+/** File name of the store inside each project folder. */
+export const STORE_FILE_NAME = "common-context.json";
+
+/**
+ * Each project folder has its own store. The file is common-context.json in that folder, created on
+ * first use. The folder is CONTEXT_MCP_PROJECT_DIR when set (hooks pass the folder each event runs in),
+ * otherwise the process working directory. CONTEXT_MCP_FILE, if set, names the file directly.
+ */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const file = env.CONTEXT_MCP_FILE?.trim() || path.join(os.homedir(), ".shared-context.json");
+  const projectDir = env.CONTEXT_MCP_PROJECT_DIR?.trim() || process.cwd();
+  const file = env.CONTEXT_MCP_FILE?.trim() || path.join(projectDir, STORE_FILE_NAME);
   return {
     file: path.resolve(file),
     agentId:
