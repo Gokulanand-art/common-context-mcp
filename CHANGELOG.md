@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.0.2
+
+- The install instructions show the setup step right after `npm install -g common-context-mcp`: run `common-context-mcp-setup`.
+- The message printed when setup can't run in a terminal names that next step.
+
 ## 3.0.1
 
 - The protocol block is the first thing in every agent's rules file, so it is read before the rest of the file. The user's own rules follow it unchanged.
