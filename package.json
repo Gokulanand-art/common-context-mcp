@@ -1,29 +1,45 @@
 {
   "name": "common-context-mcp",
-  "version": "1.0.0",
-  "description": "Shared context MCP for AI agents - append-only, zero config, auto-detect",
+  "version": "2.8.1",
+  "description": "Shared, append-only context store for AI agents over MCP: checkpoints, failures, claims, handoffs, crash recovery. Multi-process safe.",
   "main": "dist/index.js",
   "bin": {
-    "common-context-mcp": "dist/index.js"
+    "common-context-mcp": "dist/index.js",
+    "common-context-mcp-setup": "scripts/postinstall.js",
+    "agent-nervous-system-mcp": "dist/index.js",
+    "agent-nervous-system-mcp-setup": "scripts/postinstall.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test \"test/*.test.js\"",
     "start": "node dist/index.js",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "npm run build && npm test",
     "postinstall": "node scripts/postinstall.js"
   },
-  "keywords": ["mcp", "shared-context", "agent-memory", "ai", "common-context"],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "shared-context",
+    "agent-memory",
+    "ai-agents",
+    "common-context"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "zod": "^3.23.0"
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "typescript": "^5.0.0",
-    "@types/node": "^20.0.0"
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
   },
-  "files": ["dist/", "scripts/", "README.md"],
+  "files": [
+    "dist/",
+    "scripts/",
+    "README.md"
+  ],
   "engines": {
     "node": ">=18.0.0"
   }
