@@ -3,6 +3,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { loadConfig } from "./config.js";
 import { ContextStore, type ContextData } from "./store.js";
+import { redact } from "./redact.js";
+
+export { redact };
 
 /**
  * Enforcement hooks for the AI tools that support them. The protocol is:
@@ -78,6 +81,8 @@ interface State {
   summarizedSincePrompt: boolean;
   pendingError: PendingError | null;
   stopBlocks: number;
+  /** The full protocol is sent once per session; later messages get a one-line reminder. */
+  protocolShown?: boolean;
 }
 
 /** What a handler wants to say. render() turns it into the caller's format. */
@@ -129,15 +134,6 @@ const emptyState = (): State => ({
 const enforcing = () => process.env.CONTEXT_MCP_ENFORCE !== "0";
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
-/** Masks common credential shapes before anything is written to the shared store. */
-export function redact(s: string): string {
-  return s
-    .replace(/(authorization:\s*)(bearer|basic)\s+\S+/gi, "$1$2 [REDACTED]")
-    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/g, "Bearer [REDACTED]")
-    .replace(/\b(sk|pk|ghp|gho|ghs|xox[abprs])[-_][A-Za-z0-9_-]{12,}/g, "[REDACTED]")
-    .replace(/\bAKIA[0-9A-Z]{16}\b/g, "[REDACTED]")
-    .replace(/((?:api[_-]?key|token|secret|password|passwd|pwd)\s*[=:]\s*)("?)[^\s"&,;]+/gi, "$1$2[REDACTED]");
-}
 
 function text(v: unknown): string {
   if (typeof v === "string") return v;
@@ -239,6 +235,9 @@ function briefing(ctx: Ctx): string {
   }
 }
 
+/** One line, sent on later messages of a session. Enforcement does not depend on it. */
+const REMINDER = `common-context: load_context or search_context before work; checkpoint with save_context; save_context then save_summary before the final answer.`;
+
 const PROTOCOL = `common-context protocol (enforced by hooks):
 1. Before any other tool for this message, call ${full("load_context")} (first message of a session) or ${full("search_context")}.
 2. Call ${full("save_context")} after each meaningful step (this is the checkpoint).
@@ -257,9 +256,13 @@ export function onUserPromptSubmit(input: Input, ctx: Ctx): Decision {
   state.stopBlocks = 0;
   writeState(ctx.sid, state);
   const status = state.loaded ? `session ${state.mcpSession ?? "loaded"}` : "not loaded — load_context required";
+  // The full protocol is already in the agent's rules file. Send it once per session, then a short reminder.
+  const context = state.protocolShown ? REMINDER : PROTOCOL;
+  state.protocolShown = true;
+  writeState(ctx.sid, state);
   return {
     systemMessage: `🧠 common-context: protocol active for this message (${status}; ${briefing(ctx)})`,
-    context: PROTOCOL,
+    context,
   };
 }
 
@@ -360,7 +363,7 @@ export function onStop(input: Input, ctx: Ctx): Decision {
     // The agent has had its chances. Record what we can so nothing is silently lost.
     if (needsSummary) {
       const at = new Date().toISOString();
-      const accomplished = redact(clip(input.last_assistant_message ?? input.prompt_response ?? "(no final message)", 4000));
+      const accomplished = redact(clip(input.last_assistant_message ?? input.prompt_response ?? "(no final message)", 600));
       storeFor(ctx).write((d: ContextData) => {
         const existing = d.sessions.find(x => x.id === state.mcpSession);
         if (existing && existing.status !== "completed") {

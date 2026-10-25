@@ -14,6 +14,12 @@ export interface Config {
   maxOutputChars: number;
   /** How long a write waits for the cross-process lock before failing. */
   lockTimeoutMs: number;
+  /** Most characters the brief load_context view may produce. */
+  loadBudgetChars: number;
+  /** Completed sessions kept in the store; older ones move to the archive file. */
+  archiveSessions: number;
+  /** Completed sessions older than this many days move to the archive file. */
+  archiveDays: number;
 }
 
 function positiveNumber(name: string, raw: string | undefined, fallback: number): number {
@@ -46,5 +52,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     claimMs: positiveNumber("CONTEXT_MCP_CLAIM_MINUTES", env.CONTEXT_MCP_CLAIM_MINUTES, 30) * 60_000,
     maxOutputChars: positiveNumber("CONTEXT_MCP_MAX_OUTPUT_CHARS", env.CONTEXT_MCP_MAX_OUTPUT_CHARS, 40_000),
     lockTimeoutMs: 10_000,
+    loadBudgetChars: positiveNumber("CONTEXT_MCP_LOAD_BUDGET_CHARS", env.CONTEXT_MCP_LOAD_BUDGET_CHARS, 6_000),
+    archiveSessions: positiveNumber("CONTEXT_MCP_ARCHIVE_SESSIONS", env.CONTEXT_MCP_ARCHIVE_SESSIONS, 100),
+    archiveDays: positiveNumber("CONTEXT_MCP_ARCHIVE_DAYS", env.CONTEXT_MCP_ARCHIVE_DAYS, 30),
   };
 }

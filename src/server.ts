@@ -7,45 +7,26 @@ import { loadConfig, STORE_FILE_NAME, type Config } from "./config.js";
 import {
   ContextStore,
   SCHEMA_VERSION,
+  appendArchive,
+  splitArchive,
   type ContextData,
   type SessionEntry,
 } from "./store.js";
+import { excerpt, renderLoad, type Detail } from "./render.js";
+import { redact } from "./redact.js";
+import { log } from "./log.js";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const VERSION: string = (require("../package.json") as { version: string }).version;
 export const SERVER_NAME = "common-context";
 
-const INSTRUCTIONS = `CRITICAL PROTOCOL — YOU MUST FOLLOW THIS EXACTLY:
-
-1. FIRST ACTION: Call load_context() before ANY other work. MANDATORY. No exceptions.
-   - If an interrupted session is found, resume it with resume_session(session_id) or start fresh.
-   - If another agent's session is active, do not duplicate its work; check list_claims() first.
-
-2. DURING WORK: Call save_context() after EVERY meaningful step.
-   - This is your CHECKPOINT. If you get cut off, this is what survives.
-   - Do NOT batch saves. Save frequently. Every decision, every fact, every config.
-   - Call search_context() before any new approach to check if it was tried before.
-   - On EVERY new user message, call load_context() or search_context() first, before any other tool.
-
-3. ON ANY FAILURE: Call save_failure() IMMEDIATELY before trying alternatives.
-   - Record what failed and why. Do not skip this.
-   - When an approach works after trying others, call record_success().
-
-4. ON IMPORTANT DECISIONS: Call broadcast() to notify other agents.
-   - Before editing a shared file, claim_area() it; release_area() when done.
-
-5. BEFORE FINISHING: Call save_context() with the final state, then save_summary() — THIS IS MANDATORY.
-   - Only give your final answer after both succeed.
-
-6. IF YOU SENSE YOUR SESSION IS ENDING (token limit, user says stop, etc.):
-   - Call save_summary() IMMEDIATELY with everything done so far.
-   - Tell the user: "Progress saved to shared context. Switch to another agent to continue."
-
-7. NEVER attempt a known-failed approach without checking search_context() first.
-
-8. All MCP calls are visible to the user. Be transparent.
-
-This MCP is your shared nervous system. Every agent reads from and writes to it. What you record here, the next agent inherits. What you fail to record, the next agent repeats.`;
+export const INSTRUCTIONS = `common-context protocol (mandatory, every message, including greetings):
+1. Before any other tool or reply, call load_context (first message of a session) or search_context.
+2. After each meaningful step, call save_context. This is the checkpoint.
+3. On a failure, call save_failure, then search_context before any alternative.
+4. Before editing a shared file, call claim_area; call release_area when done.
+5. Before the final answer: save_context with the final state, then save_summary. Give the final answer only after both succeed.
+Every tool except load_context requires load_context first in this session.`;
 
 // Caps keep load_context useful as the store grows. Older items stay in the
 // store and are reachable through search_context and get_audit_trail.
@@ -56,6 +37,8 @@ const LIMITS = {
 };
 
 const MAX_TEXT = 20_000;
+// Write-time caps. Longer text is clipped, not rejected, so a save never fails on length.
+const CAP = { accomplished: 1_500, notes: 800, checkpoint: 300, value: 4_000 } as const;
 const SHORT = 200;
 const MED = 2_000;
 
@@ -119,7 +102,7 @@ export function createServer(initial: Config = loadConfig()): McpServer {
     state.loaded = false;
     state.completed = false;
     state.sessionId = null;
-    process.stderr.write(`[common-context] project: ${dir} (store: ${config.file})\n`);
+    log.info(`project: ${dir} (store: ${config.file})`);
   }
 
   /** The first file:// workspace root the client reports, or null. */
@@ -134,7 +117,7 @@ export function createServer(initial: Config = loadConfig()): McpServer {
       const root = res.roots.find(r => r.uri.startsWith("file://"));
       return root ? fileURLToPath(root.uri) : null;
     } catch (e) {
-      process.stderr.write(`[common-context] could not read roots: ${(e as Error).message}\n`);
+      log.warn(`could not read roots: ${(e as Error).message}`);
       return null;
     }
   }
@@ -156,7 +139,7 @@ export function createServer(initial: Config = loadConfig()): McpServer {
     server.registerTool(
       name,
       {
-        description: requiresLoad ? `${description} Requires load_context() first.` : description,
+        description,
         inputSchema: shape,
         annotations: { readOnlyHint: opts.readOnly === true },
       },
@@ -171,7 +154,7 @@ export function createServer(initial: Config = loadConfig()): McpServer {
           return handler(args);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          process.stderr.write(`[common-context] ${name} failed: ${msg}\n`);
+          log.error(`${name} failed: ${msg}`);
           return fail(`ERROR in ${name}: ${msg}`);
         }
       }) as any
@@ -181,12 +164,15 @@ export function createServer(initial: Config = loadConfig()): McpServer {
   // ─── load_context ─────────────────────────────────────────
   register(
     "load_context",
-    "Load shared context at session start. Marks dead sessions as interrupted, starts a new session for this agent, and lists what other agents are doing.",
-    {},
-    () => {
+    "Start a session and load shared context: other agents' work, recent sessions, failures to avoid. Brief by default.",
+    {
+      detail: z.enum(["brief", "full"]).optional().describe("brief (default) or full, which is everything in the store"),
+    },
+    ({ detail }) => {
+      const mode: Detail = detail === "full" ? "full" : "brief";
       if (state.loaded && state.sessionId) {
         // Already loaded in this process: re-read without starting a second session.
-        return ok(cap(store.read(d => render(d, state.sessionId))));
+        return ok(cap(store.read(d => view(d, state.sessionId, mode))));
       }
       const text = store.write(d => {
         const t = Date.now();
@@ -217,7 +203,15 @@ export function createServer(initial: Config = loadConfig()): McpServer {
           heartbeat: now(),
         });
         state.sessionId = id;
-        return render(d, id);
+        // Old sessions and failures leave the live store for the archive file; nothing is deleted.
+        const moved = splitArchive(d, {
+          keepSessions: config.archiveSessions,
+          days: config.archiveDays,
+          keepId: id,
+          now: t,
+        });
+        appendArchive(config.file, moved.sessions, moved.failures);
+        return view(d, id, mode);
       });
       state.loaded = true;
       state.completed = false;
@@ -226,104 +220,22 @@ export function createServer(initial: Config = loadConfig()): McpServer {
     { requiresLoad: false, readOnly: false }
   );
 
-  function render(d: ContextData, currentId: string | null): string {
-    const t = Date.now();
-    const out: string[] = [];
-    out.push("=== SHARED CONTEXT LOADED ===");
-    out.push(`Your session: ${currentId ?? "(none)"} (agent ${me})`);
-    out.push(`Sessions: ${d.sessions.length} | Failures: ${d.failures.length} | Context entries: ${Object.keys(d.contexts).length}`);
-    out.push(`Patterns: ${d.patterns.works.length} work, ${d.patterns.fails.length} fail`);
-    out.push("");
-
-    const live = d.sessions.filter(s => s.id !== currentId && s.agent !== me && isLive(s, t));
-    if (live.length > 0) {
-      out.push("⏳ ACTIVE IN OTHER AGENTS (do not duplicate; check list_claims):");
-      for (const s of live) out.push(`  [${s.id}] "${s.title}" by ${s.agent} (heartbeat ${s.heartbeat})`);
-      out.push("");
-    }
-
-    const interrupted = d.sessions.filter(s => s.status === "interrupted").slice(-10);
-    if (interrupted.length > 0) {
-      out.push("⚠️ INTERRUPTED SESSIONS (resume_session(session_id) to continue one):");
-      for (const s of interrupted) {
-        out.push(`  [${s.id}] "${s.title}" by ${s.agent}`);
-        out.push(`  Last checkpoint: ${s.checkpoint || s.accomplished || "none"}`);
-        out.push(`  Next steps: ${s.next_steps || "none"}`);
-        out.push(`  Interrupted at: ${s.interrupted_at || s.timestamp}`);
-        out.push("");
-      }
-    }
-
-    const ctxEntries = Object.entries(d.contexts).sort((a, b) => b[1].updated.localeCompare(a[1].updated));
-    if (ctxEntries.length > 0) {
-      out.push("--- CONTEXT ENTRIES ---");
-      for (const [key, e] of ctxEntries.slice(0, LIMITS.load.contexts)) {
-        out.push(`[${key}] ${e.value} (tags: ${e.tags.join(", ")}) [by ${e.agent}]`);
-      }
-      if (ctxEntries.length > LIMITS.load.contexts) {
-        out.push(`...${ctxEntries.length - LIMITS.load.contexts} older entries omitted; use search_context.`);
-      }
-      out.push("");
-    }
-
-    if (d.sessions.length > 0) {
-      out.push("--- SESSION HISTORY (most recent) ---");
-      for (const s of d.sessions.slice(-LIMITS.load.sessions)) {
-        out.push(`[${s.id}] ${s.title} (${s.status}) by ${s.agent} at ${s.timestamp}`);
-        if (s.accomplished) out.push(`  Accomplished: ${s.accomplished}`);
-        if (s.learned) out.push(`  Learned: ${s.learned}`);
-        if (s.decisions) out.push(`  Decisions: ${s.decisions}`);
-        if (s.next_steps) out.push(`  Next steps: ${s.next_steps}`);
-        if (s.checkpoint) out.push(`  Checkpoint: ${s.checkpoint}`);
-      }
-      out.push("");
-    }
-
-    if (d.failures.length > 0) {
-      out.push("--- FAILURE RECORDS (DO NOT REPEAT) ---");
-      for (const f of d.failures.slice(-LIMITS.load.failures)) {
-        out.push(`[${f.approach}] ${f.why_failed} (by ${f.agent}, ${f.timestamp})`);
-      }
-      out.push("");
-    }
-
-    if (d.broadcasts.length > 0) {
-      out.push("--- BROADCASTS (most recent) ---");
-      for (const b of d.broadcasts.slice(-LIMITS.load.broadcasts)) {
-        out.push(`[${b.agent}] ${b.message} (${b.timestamp})`);
-      }
-      out.push("");
-    }
-
-    if (d.patterns.works.length > 0 || d.patterns.fails.length > 0) {
-      out.push("--- PATTERNS ---");
-      if (d.patterns.works.length > 0) out.push(`Works: ${d.patterns.works.join(", ")}`);
-      if (d.patterns.fails.length > 0) out.push(`Fails: ${d.patterns.fails.join(", ")}`);
-      out.push("");
-    }
-
-    const claims = Object.entries(d.claims).filter(([, c]) => Date.parse(c.expires) > t);
-    if (claims.length > 0) {
-      out.push("--- ACTIVE CLAIMS ---");
-      for (const [area, c] of claims) out.push(`${area} → claimed by ${c.agent} (since ${c.since})`);
-      out.push("");
-    }
-
-    out.push("=== END OF CONTEXT ===");
-    out.push("You now have full shared knowledge. Proceed with your work.");
-    return out.join("\n");
+  /** The load view for the current project store. */
+  function view(d: ContextData, currentId: string | null, detail: Detail): string {
+    return renderLoad(d, currentId, { agentId: me, staleMs: config.staleMs, detail, budgetChars: config.loadBudgetChars });
   }
 
   // ─── save_context ─────────────────────────────────────────
   register(
     "save_context",
-    "Save a context entry (fact, decision, config). This is also a CHECKPOINT — if you get cut off, this survives. Call frequently. Overwriting a key keeps its previous value in history.",
+    "Save a fact, decision or config under a key. This is the checkpoint. Overwriting keeps the old value in history.",
     {
       key: z.string().min(1).max(SHORT).describe("Unique key for this context entry"),
       value: z.string().max(MAX_TEXT).describe("The value/content to store"),
       tags: z.array(z.string().max(50)).max(20).optional().describe("Tags for categorization"),
     },
-    ({ key, value, tags }) => {
+    ({ key, value: raw, tags }) => {
+      const value = redact(clip(raw, CAP.value));
       store.write(d => {
         const prev = d.contexts[key];
         d.contexts[key] = {
@@ -353,7 +265,11 @@ export function createServer(initial: Config = loadConfig()): McpServer {
       decisions: z.string().max(MAX_TEXT).optional().describe("Key decisions made (optional)"),
       next_steps: z.string().max(MAX_TEXT).optional().describe("Next steps for future agents (optional)"),
     },
-    ({ title, accomplished, learned = "", decisions = "", next_steps = "" }) => {
+    ({ title, accomplished: acc, learned: l = "", decisions: dec = "", next_steps: next = "" }) => {
+      const accomplished = redact(clip(acc, CAP.accomplished));
+      const learned = redact(clip(l, CAP.notes));
+      const decisions = redact(clip(dec, CAP.notes));
+      const next_steps = redact(clip(next, CAP.notes));
       store.write(d => {
         let s = d.sessions.find(x => x.id === state.sessionId);
         if (!s) {
@@ -398,7 +314,9 @@ export function createServer(initial: Config = loadConfig()): McpServer {
       approach: z.string().min(1).max(MED).describe("What was attempted"),
       why_failed: z.string().min(1).max(MED).describe("Why it failed"),
     },
-    ({ approach, why_failed }) => {
+    ({ approach: a, why_failed: w }) => {
+      const approach = redact(clip(a, MED));
+      const why_failed = redact(clip(w, MED));
       store.write(d => {
         d.failures.push({ approach, why_failed, agent: me, timestamp: now() });
         if (!d.patterns.fails.includes(approach)) d.patterns.fails.push(approach);
@@ -427,37 +345,41 @@ export function createServer(initial: Config = loadConfig()): McpServer {
   // ─── search_context ───────────────────────────────────────
   register(
     "search_context",
-    "Search all shared context by keyword (case-insensitive). Searches contexts, sessions, failures and broadcasts.",
+    "Search shared context by keyword. Returns short excerpts with ids; use get_audit_trail or load_context detail \"full\" for more.",
     {
       query: z.string().min(1).max(SHORT).describe("Search query"),
+      limit: z.number().int().min(1).max(25).optional().describe("Most results to return (default 8)"),
     },
-    ({ query }) => {
+    ({ query, limit }) => {
       const q = query.toLowerCase();
       const has = (...fields: (string | undefined)[]) =>
         fields.some(f => (f ?? "").toLowerCase().includes(q));
+      const pick = (...fields: (string | undefined)[]) =>
+        fields.find(f => (f ?? "").toLowerCase().includes(q)) ?? "";
 
       const results = store.read(d => {
         const out: string[] = [];
         for (const [key, e] of Object.entries(d.contexts)) {
-          if (has(key, e.value, ...e.tags)) out.push(`[context:${key}] ${e.value}`);
+          if (has(key, e.value, ...e.tags)) out.push(`[context:${key}] ${excerpt(e.value, q, 220)}`);
         }
         for (const s of d.sessions) {
           if (has(s.title, s.accomplished, s.learned, s.decisions, s.next_steps, s.checkpoint)) {
-            out.push(`[session:${s.id}] ${s.title} (${s.status}): ${s.accomplished}`);
+            const text = pick(s.accomplished, s.learned, s.decisions, s.next_steps, s.checkpoint, s.title);
+            out.push(`[session:${s.id}] ${s.title} (${s.status}): ${excerpt(text, q, 220)}`);
           }
         }
         for (const f of d.failures) {
-          if (has(f.approach, f.why_failed)) out.push(`[failure] ${f.approach}: ${f.why_failed}`);
+          if (has(f.approach, f.why_failed)) out.push(`[failure] ${excerpt(pick(f.approach, f.why_failed), q, 220)}`);
         }
         for (const b of d.broadcasts) {
-          if (has(b.message)) out.push(`[broadcast] ${b.message}`);
+          if (has(b.message)) out.push(`[broadcast] ${excerpt(b.message, q, 220)}`);
         }
         return out;
       });
 
       if (results.length === 0) return ok(`No results found for "${query}".`);
-      const shown = results.slice(0, LIMITS.search);
-      const more = results.length > shown.length ? `\n...${results.length - shown.length} more; narrow the query.` : "";
+      const shown = results.slice(0, limit ?? 8);
+      const more = results.length > shown.length ? `\n...${results.length - shown.length} more; narrow the query or raise limit.` : "";
       return ok(`Found ${results.length} results:\n${shown.join("\n")}${more}`);
     },
     { readOnly: true }
@@ -466,7 +388,7 @@ export function createServer(initial: Config = loadConfig()): McpServer {
   // ─── claim_area ───────────────────────────────────────────
   register(
     "claim_area",
-    "Claim a file/area to prevent other agents from working on it. Claims expire after CONTEXT_MCP_CLAIM_MINUTES (default 30) unless re-claimed.",
+    "Claim a file or area so other agents avoid it. Expires after CONTEXT_MCP_CLAIM_MINUTES (default 30).",
     {
       area: z.string().min(1).max(500).describe("File path or area to claim"),
     },
@@ -632,7 +554,7 @@ export function createServer(initial: Config = loadConfig()): McpServer {
   // ─── resume_session ───────────────────────────────────────
   register(
     "resume_session",
-    "Resume an interrupted session. Takes over its checkpoint under this agent. Refuses completed sessions and sessions another live agent is working on.",
+    "Take over an interrupted session under this agent. Refuses completed sessions and ones another live agent is using.",
     {
       session_id: z.string().min(1).max(SHORT).describe("Session ID to resume (from load_context output)"),
     },
@@ -681,7 +603,7 @@ export function createServer(initial: Config = loadConfig()): McpServer {
   // ─── session_status ───────────────────────────────────────
   register(
     "session_status",
-    "Check store and session health: size, counts, interrupted sessions and an estimate of how much context remains to load.",
+    "Store health: size, counts, interrupted sessions, estimated tokens of context.",
     {},
     () => {
       const { data, bytes } = store.read(d => ({ data: d, bytes: store.sizeBytes() }));

@@ -1,5 +1,20 @@
 # Changelog
 
+## 3.1.0
+
+- **Smaller context for agents.** `load_context` returns a brief view by default, held to `CONTEXT_MCP_LOAD_BUDGET_CHARS` (6000 characters, about 1,500 tokens). It keeps the newest items of each kind and drops the least important sections first, with a note on what was left out. `detail: "full"` returns everything.
+- On a large store (300 sessions, 200 failures, 150 context entries), the brief view is about 1,200 tokens. The full view is about 12,000 tokens on the author's real store.
+- `search_context` returns up to 8 short excerpts (`limit` raises that to 25) instead of full records.
+- The protocol text is shorter. Agents get the full hook protocol once per session and a one-line reminder after that. The strict rules are unchanged.
+- Tool descriptions no longer repeat the load requirement. The server instructions are shorter.
+- Write-time caps: text in `save_context` and `save_summary` is clipped to 4000 and 1500/800/300 characters. The hook's auto-summary keeps 600 characters.
+- Store archiving: old completed sessions (beyond the newest 100, or older than 30 days) and failures beyond the newest 200 move to `<store>.archive.jsonl`. Nothing is deleted. The current session is never moved.
+- Credentials are redacted in `save_context`, `save_summary` and `save_failure`, not only in hook records.
+- Diagnostics go through a leveled logger: `CONTEXT_MCP_LOG_LEVEL` (error, warn, info, debug) and `CONTEXT_MCP_LOG` (text or json).
+- `common-context-mcp doctor --tokens` reports the estimated tokens each part costs.
+- A release workflow publishes tagged versions with npm provenance. It needs an `NPM_TOKEN` secret.
+- The rules block in agent files is shorter; running `common-context-mcp-setup` rewrites it in place.
+
 ## 3.0.2
 
 - The install instructions show the setup step right after `npm install -g common-context-mcp`: run `common-context-mcp-setup`.

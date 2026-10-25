@@ -4,7 +4,10 @@ import * as os from "node:os";
 import { spawnSync } from "node:child_process";
 import { loadConfig } from "./config.js";
 import { ContextStore } from "./store.js";
-import { VERSION } from "./server.js";
+import { VERSION, INSTRUCTIONS } from "./server.js";
+import { renderLoad } from "./render.js";
+// The installer lives beside the package root, outside src; it is shipped in the package.
+const agents: { upsertMarkdown(text: string): string } = require("../scripts/agents.js");
 
 /** `warn` checks are advisory: they never make doctor exit non-zero. */
 type Check = { name: string; ok: boolean; warn?: boolean; detail: string };
@@ -73,4 +76,30 @@ export function runDoctor(): number {
   lines.push("", failed === 0 ? `Healthy${warnings ? ` (${warnings} warning(s))` : ""}.` : `${failed} check(s) failed.`);
   process.stdout.write(lines.join("\n") + "\n");
   return failed === 0 ? 0 : 1;
+}
+
+/** `doctor --tokens`: estimated tokens (characters / 4) for the fixed text and the load view on the current store. */
+export function runTokenReport(): number {
+  const config = loadConfig();
+  const tok = (c: number) => Math.ceil(c / 4);
+  const rows: [string, number][] = [];
+  rows.push(["server instructions (sent every session)", INSTRUCTIONS.length]);
+  rows.push(["rules block in agent files (sent every session)", agents.upsertMarkdown("").length]);
+  let store: ContextStore | null = null;
+  try {
+    store = new ContextStore(config);
+    const data = store.read(d => d);
+    const brief = renderLoad(data, null, { agentId: config.agentId, staleMs: config.staleMs, detail: "brief", budgetChars: config.loadBudgetChars });
+    const full = renderLoad(data, null, { agentId: config.agentId, staleMs: config.staleMs, detail: "full", budgetChars: config.loadBudgetChars });
+    rows.push([`load_context brief (budget ${config.loadBudgetChars} chars)`, brief.length]);
+    rows.push(["load_context full (current store)", full.length]);
+  } catch (e) {
+    console.log(`  store unreadable: ${(e as Error).message}`);
+  }
+  console.log(`common-context-mcp ${VERSION}: estimated tokens (characters / 4)`);
+  console.log(`  store: ${config.file}`);
+  for (const [name, chars] of rows) console.log(`  ${name.padEnd(54)} ${String(tok(chars)).padStart(7)} tokens`);
+  const archive = `${config.file}.archive.jsonl`;
+  if (fs.existsSync(archive)) console.log(`  archive: ${archive} (${fs.statSync(archive).size} bytes, not sent to agents)`);
+  return 0;
 }
