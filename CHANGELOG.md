@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.9.0
+
+- Strict per-message harness. For every message, the agent must load or search the store first, checkpoint its work with `save_context`, and save the summary last. The stop hook holds the final answer until these are done.
+- A summary saved before the checkpoint does not count. Checkpoint first, then `save_summary`.
+- The protocol text written to every agent's rules file and the server instructions say the same thing, and apply to every model and agent.
+
 ## 2.8.1
 
 - `save_summary` now requires only `title` and `accomplished`. `learned`, `decisions` and `next_steps` are optional. Claude's calls were being rejected whenever it omitted one, so the summary was lost.

@@ -74,6 +74,7 @@ interface State {
   mcpSession: string | null;
   mcpSincePrompt: boolean;
   workSincePrompt: boolean;
+  checkpointSincePrompt: boolean;
   summarizedSincePrompt: boolean;
   pendingError: PendingError | null;
   stopBlocks: number;
@@ -116,6 +117,7 @@ const emptyState = (): State => ({
   mcpSession: null,
   mcpSincePrompt: false,
   workSincePrompt: false,
+  checkpointSincePrompt: false,
   summarizedSincePrompt: false,
   pendingError: null,
   stopBlocks: 0,
@@ -233,7 +235,8 @@ const PROTOCOL = `common-context protocol (enforced by hooks):
 1. Before any other tool for this message, call ${full("load_context")} (first message of a session) or ${full("search_context")}.
 2. Call ${full("save_context")} after each meaningful step (this is the checkpoint).
 3. On any error, ${full("save_failure")} is recorded automatically; call ${full("search_context")} before trying an alternative.
-4. Before your final answer, call ${full("save_summary")} with what was done, learned, decided and next steps.`;
+4. If you did any work for this message, call ${full("save_context")} to checkpoint it before your final answer.
+5. Before your final answer, call ${full("save_summary")} with what was done, learned, decided and next steps. Never give a final answer without it.`;
 
 // ─── handlers ─────────────────────────────────────────────────────────
 
@@ -241,6 +244,7 @@ export function onUserPromptSubmit(input: Input, ctx: Ctx): Decision {
   const state = readState(ctx.sid);
   state.mcpSincePrompt = false;
   state.workSincePrompt = false;
+  state.checkpointSincePrompt = false;
   state.summarizedSincePrompt = false;
   state.stopBlocks = 0;
   writeState(ctx.sid, state);
@@ -284,7 +288,10 @@ export function onPostToolUse(input: Input, ctx: Ctx): Decision {
       if (m) state.mcpSession = m[1];
       note = state.mcpSession ? ` (${state.mcpSession})` : "";
     }
-    if (name === "save_summary") state.summarizedSincePrompt = true;
+    // The checkpoint is the save_context that writes this message's progress to the shared store.
+    if (name === "save_context") state.checkpointSincePrompt = true;
+    // The summary only counts once the checkpoint exists, so the order is always checkpoint, then summary.
+    if (name === "save_summary" && (!state.workSincePrompt || state.checkpointSincePrompt)) state.summarizedSincePrompt = true;
     if (name === "search_context" || name === "save_failure") state.pendingError = null;
     writeState(ctx.sid, state);
     return { systemMessage: `✓ common-context: ${name}${note}` };
@@ -321,6 +328,9 @@ export function onStop(input: Input, ctx: Ctx): Decision {
   const problems: string[] = [];
   if (!state.mcpSincePrompt) {
     problems.push(`Before answering, call ${full("search_context")} (or ${full("load_context")}) for this message.`);
+  }
+  if (state.workSincePrompt && !state.checkpointSincePrompt) {
+    problems.push(`Before your final answer, checkpoint this message's work with ${full("save_context")}.`);
   }
   const needsSummary = state.workSincePrompt && !state.summarizedSincePrompt;
   if (needsSummary) {
