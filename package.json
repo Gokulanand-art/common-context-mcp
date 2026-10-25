@@ -1,6 +1,6 @@
 {
   "name": "common-context-mcp",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Shared, append-only context store for AI agents over MCP: checkpoints, failures, claims, handoffs, crash recovery. Multi-process safe.",
   "main": "dist/index.js",
   "bin": {

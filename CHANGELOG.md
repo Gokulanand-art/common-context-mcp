@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.1
+
+- The protocol block is the first thing in every agent's rules file, so it is read before the rest of the file. The user's own rules follow it unchanged.
+- The protocol applies to every message, including greetings such as "hi". Before this, OpenCode could answer a greeting without calling the MCP.
+- `common-context.json` is in `.gitignore`, so each project's store stays out of commits.
+- OpenCode checked live: a greeting now calls `load_context` and creates the project's store.
+
 ## 3.0.0
 
 - **Breaking:** each project folder has its own store, `common-context.json` in that folder, created on first use. The default is no longer `~/.shared-context.json`. Data already in the old file is not moved; set `CONTEXT_MCP_FILE` to keep using it.

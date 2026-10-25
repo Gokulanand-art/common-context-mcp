@@ -38,7 +38,7 @@ const PROTOCOL = `## common-context protocol
 
 This machine shares one context store between AI agents through the \`common-context\` MCP server. This is mandatory and applies to every model and every agent with this server installed. Follow these rules for every user message, with no exceptions:
 
-1. Before any other tool call for a message, call \`load_context\` (first message of a session) or \`search_context\`. Do this on every message, not only the first.
+1. Before any other tool call or any reply for a message, call \`load_context\` (first message of a session) or \`search_context\`. Do this on every message, not only the first, including greetings and one-word messages such as \"hi\".
 2. After each meaningful step, call \`save_context\` with a key and value. This is your checkpoint. Any work for a message must be checkpointed before the summary.
 3. When something fails, call \`save_failure\` with what failed and why. Then call \`search_context\` for related records before trying an alternative approach.
 4. Before a shared file is edited, call \`claim_area\`. Call \`release_area\` when done.
@@ -220,13 +220,13 @@ const markdownBlock = () => `${MD_START}\n${PROTOCOL}\n${MD_END}`;
 
 /** Replaces our block, or appends it. Text outside the markers is never touched. */
 function upsertMarkdown(text) {
+  // The protocol goes first, so the agent reads it before anything else in its rules file.
+  // An existing block is moved to the top; the rest of the file is kept as it was.
   const start = text.indexOf(MD_START);
   const end = text.indexOf(MD_END);
-  if (start !== -1 && end > start) {
-    return text.slice(0, start) + markdownBlock() + text.slice(end + MD_END.length);
-  }
-  const base = text.replace(/\s*$/, "");
-  return (base ? base + "\n\n" : "") + markdownBlock() + "\n";
+  const rest = start !== -1 && end > start ? text.slice(0, start) + text.slice(end + MD_END.length) : text;
+  const body = rest.replace(/^\s*/, "").replace(/\s*$/, "");
+  return markdownBlock() + "\n" + (body ? "\n" + body + "\n" : "");
 }
 
 function applyRules(file) {
