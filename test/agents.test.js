@@ -23,10 +23,11 @@ test("Codex TOML: refuses to clobber a user-defined common-context table", () =>
   assert.throws(() => agents.withTomlServer(text), /already defines/);
 });
 
-test("Markdown rules: appends the block, replaces it on rerun, keeps surrounding text", () => {
+test("Markdown rules: the block goes first, is replaced on rerun, and keeps surrounding text", () => {
   const first = agents.upsertMarkdown("# My rules\n\nBe concise.\n");
-  assert.match(first, /^# My rules\n\nBe concise\.\n\n<!-- common-context:start -->/);
+  assert.match(first, /^<!-- common-context:start -->/, "protocol is the first thing the agent reads");
   assert.match(first, /load_context/);
+  assert.match(first, /# My rules\n\nBe concise\.\n$/, "the user's own rules are kept after it");
   const edited = first.replace("Be concise.", "Be concise and kind.") + "\nMore notes.\n";
   const again = agents.upsertMarkdown(edited);
   assert.match(again, /Be concise and kind\./, "text outside the block kept");
