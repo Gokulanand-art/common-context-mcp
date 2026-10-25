@@ -11,9 +11,10 @@ A shared, append-only context store for AI agents, exposed as a [Model Context P
 
 ```bash
 npm install -g common-context-mcp
+common-context-mcp-setup
 ```
 
-Setup detects which of the supported AI tools are installed, lists them, and asks which ones to configure. Only the tools you select are changed.
+The second command is the setup step. Run it right after the install. It detects which of the supported AI tools are installed, lists them, and asks which ones to configure. Only the tools you select are changed.
 
 | Tool | MCP server written to | Protocol written to |
 |------|-----------------------|---------------------|
