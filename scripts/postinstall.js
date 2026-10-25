@@ -154,7 +154,7 @@ async function run(argv) {
 
   if (!interactive && !yes) {
     log("  Not running in a terminal, so nothing was configured.");
-    log("  Run `common-context-mcp-setup` in a terminal to choose tools.");
+    log("  Next step: run `common-context-mcp-setup` in a terminal to choose tools.");
     log("");
     return;
   }
