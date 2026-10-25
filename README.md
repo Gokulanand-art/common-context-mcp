@@ -121,7 +121,8 @@ An agent that goes quiet for longer than the stale window looks dead to the othe
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `CONTEXT_MCP_FILE` | `~/.shared-context.json` | Path of the shared store. |
+| `CONTEXT_MCP_PROJECT_DIR` | working directory | Project folder. Its store is `common-context.json` inside it. |
+| `CONTEXT_MCP_FILE` | `<project>/common-context.json` | Store file, overriding the project folder. |
 | `CONTEXT_MCP_AGENT_ID` | random per process | Stable identity for this agent (e.g. `claude-code-laptop`). |
 | `CONTEXT_MCP_STALE_MINUTES` | `15` | Idle time after which a session is considered dead. |
 | `CONTEXT_MCP_CLAIM_MINUTES` | `30` | Claim lifetime without renewal. |

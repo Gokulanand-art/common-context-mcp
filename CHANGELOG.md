@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.0
+
+- **Breaking:** each project folder has its own store, `common-context.json` in that folder, created on first use. The default is no longer `~/.shared-context.json`. Data already in the old file is not moved; set `CONTEXT_MCP_FILE` to keep using it.
+- The store used by a tool call is the one in the project folder. Hooks use the `cwd` that each agent sends with the event. The MCP server asks the client for its workspace roots before each tool call and follows the first `file://` root. Switching folders in an open session starts a new store, and the agent must call `load_context` again. Without client roots, the server uses the folder it started in.
+- `CONTEXT_MCP_PROJECT_DIR` sets the project folder explicitly. `CONTEXT_MCP_FILE` still overrides the file.
+
 ## 2.9.0
 
 - Strict per-message harness. For every message, the agent must load or search the store first, checkpoint its work with `save_context`, and save the summary last. The stop hook holds the final answer until these are done.
