@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.1.1
+
+- Fix: a tool call refused by the enforcement gate is no longer recorded as a new failure. Before this, each refusal replaced the pending error with the refusal text, so agents (seen in OpenCode) saw every tool "fail" with a confusing, changing message.
+- `load_context` now clears a pending error, as `search_context` and `save_failure` already did.
+
 ## 3.1.0
 
 - **Smaller context for agents.** `load_context` returns a brief view by default, held to `CONTEXT_MCP_LOAD_BUDGET_CHARS` (6000 characters, about 1,500 tokens). It keeps the newest items of each kind and drops the least important sections first, with a note on what was left out. `detail: "full"` returns everything.

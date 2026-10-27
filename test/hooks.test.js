@@ -76,6 +76,21 @@ test("an error is recorded in the store and blocks alternatives until searched",
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test("a call blocked by the gate is not recorded as a new error", () => {
+  const { dir, hook, store } = setup();
+  hook("UserPromptSubmit", {});
+  hook("PostToolUse", post(M + "load_context", { text: "Your session: session-1" }));
+  hook("PostToolUse", post("Bash", { stderr: "boom", exit_code: 1 }));
+  const blocked = hook("PreToolUse", pre("Edit"));
+  const reason = blocked.hookSpecificOutput.permissionDecisionReason;
+  hook("PostToolUseFailure", { tool_name: "Edit", tool_input: {}, error: reason });
+  assert.equal(store().failures.length, 1, "the denial is not a failure");
+  assert.match(hook("PreToolUse", pre("Edit")).hookSpecificOutput.permissionDecisionReason, /exit code 1/, "original error still shown");
+  hook("PostToolUse", post(M + "load_context", { text: "Your session: session-1" }));
+  assert.equal(hook("PreToolUse", pre("Edit")).hookSpecificOutput, undefined, "load_context clears the gate");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("failed tool calls (PostToolUseFailure) are recorded too", () => {
   const { dir, hook, store } = setup();
   hook("UserPromptSubmit", {});
