@@ -196,7 +196,14 @@ function resultFailed(input: Input): string | null {
   return null;
 }
 
+/** True when the message is this gate's own deny reason, which must not be recorded as a new error. */
+export function isGateDenial(message: string): boolean {
+  return /Error just occurred: .*before any alternative approach|before using .+\.$|before any work\. It is required/.test(message);
+}
+
 function recordFailure(ctx: Ctx, state: State, input: Input, message: string): Decision {
+  // A blocked call fails because of the gate, not because of the work. Recording it would rewrite pendingError.
+  if (isGateDenial(message)) return {};
   const tool = input.tool_name ?? "unknown tool";
   const approach = redact(clip(`${tool}: ${text(input.tool_input)}`, 500));
   const why = redact(clip(message || "unknown error", 1000));
@@ -303,7 +310,7 @@ export function onPostToolUse(input: Input, ctx: Ctx): Decision {
     if (name === "save_context") state.checkpointSincePrompt = true;
     // The summary only counts once the checkpoint exists, so the order is always checkpoint, then summary.
     if (name === "save_summary" && (!state.workSincePrompt || state.checkpointSincePrompt)) state.summarizedSincePrompt = true;
-    if (name === "search_context" || name === "save_failure") state.pendingError = null;
+    if (name === "search_context" || name === "save_failure" || name === "load_context") state.pendingError = null;
     writeState(ctx.sid, state);
     return { systemMessage: `✓ common-context: ${name}${note}` };
   }
