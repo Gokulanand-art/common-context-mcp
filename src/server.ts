@@ -170,8 +170,9 @@ export function createServer(initial: Config = loadConfig()): McpServer {
     },
     ({ detail }) => {
       const mode: Detail = detail === "full" ? "full" : "brief";
-      if (state.loaded && state.sessionId) {
-        // Already loaded in this process: re-read without starting a second session.
+      // Re-read only while this process's session is still open. After save_summary the session is
+      // completed, so loading starts the next session instead of silently reusing a closed one.
+      if (state.loaded && state.sessionId && !state.completed) {
         return ok(cap(store.read(d => view(d, state.sessionId, mode))));
       }
       const text = store.write(d => {
@@ -381,9 +382,10 @@ export function createServer(initial: Config = loadConfig()): McpServer {
       const shown = results.slice(0, limit ?? 8);
       const more = results.length > shown.length ? `\n...${results.length - shown.length} more; narrow the query or raise limit.` : "";
       return ok(`Found ${results.length} results:\n${shown.join("\n")}${more}`);
-    },
-    { readOnly: true }
-  );
+    },      // search_context is the documented exception to the load-first gate: the protocol allows
+      // load_context or search_context as the first call of a session.
+      { readOnly: true, requiresLoad: false }
+    );
 
   // ─── claim_area ───────────────────────────────────────────
   register(

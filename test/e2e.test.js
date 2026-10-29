@@ -62,6 +62,44 @@ test("validation rejects oversized and empty input", async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test("search_context is allowed before load_context, writes stay gated", async () => {
+  const { dir, file } = tempStore();
+  const c = await connect(file, "a");
+  // The protocol allows load_context OR search_context as the first call.
+  const s = await call(c, "search_context", { query: "anything" });
+  assert.equal(s.isError, false, s.text);
+  assert.match(s.text, /No results found/);
+  // Everything that writes is still gated behind load_context.
+  const w = await call(c, "save_context", { key: "k", value: "v" });
+  assert.equal(w.isError, true);
+  assert.match(w.text, /load_context\(\) first/);
+  await c.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("after save_summary, load_context starts the next session", async () => {
+  const { dir, file } = tempStore();
+  const c = await connect(file, "a");
+  await call(c, "load_context");
+  const done = await call(c, "save_summary", { title: "First", accomplished: "one" });
+  assert.equal(done.isError, false, done.text);
+
+  // A completed session must not be reused: loading opens session-2.
+  const loaded = await call(c, "load_context");
+  assert.match(loaded.text, /Your session: session-2/);
+
+  // And checkpoints land on the new session, not silently on the completed one.
+  const save = await call(c, "save_context", { key: "after", value: "more work" });
+  assert.equal(save.isError, false, save.text);
+  const data = JSON.parse(fs.readFileSync(file, "utf-8"));
+  const s1 = data.sessions.find(x => x.id === "session-1");
+  const s2 = data.sessions.find(x => x.id === "session-2");
+  assert.equal(s1.status, "completed", "first session stays completed");
+  assert.match(s2.checkpoint, /Last saved: after/, "checkpoint lands on the new session");
+  await c.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("save, search, failures and patterns round-trip", async () => {
   const { dir, file } = tempStore();
   const c = await connect(file, "a");

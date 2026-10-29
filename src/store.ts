@@ -175,14 +175,39 @@ export class ContextStore {
   }
 
   private transact<T>(fn: (d: ContextData) => T, persist: boolean): T {
-    this.acquire();
+    // Identifies this acquisition so a lock stolen by another process is never released (or
+    // written over) by us, even if we were paused longer than the stale-lock threshold.
+    const token = `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    this.acquire(token);
     try {
       const data = this.load();
       const result = fn(data);
-      if (persist) this.save(data);
+      if (persist) {
+        // A stale-lock break by another process means we no longer own the critical section;
+        // refusing to write is safer than clobbering a concurrent writer's update.
+        this.assertOwner(token);
+        this.save(data);
+      }
       return result;
     } finally {
-      this.release();
+      this.release(token);
+    }
+  }
+
+  /** True when the lock file on disk is still ours. */
+  private owns(token: string): boolean {
+    try {
+      return fs.readFileSync(this.lockFile, "utf-8").trim() === token;
+    } catch {
+      return false;
+    }
+  }
+
+  private assertOwner(token: string): void {
+    if (!this.owns(token)) {
+      throw new StoreError(
+        `lost the store lock ${this.lockFile} before writing (another process took over); retry the operation`
+      );
     }
   }
 
@@ -207,13 +232,13 @@ export class ContextStore {
     fs.renameSync(tmp, this.cfg.file);
   }
 
-  private acquire(): void {
+  private acquire(token: string): void {
     fs.mkdirSync(path.dirname(this.cfg.file), { recursive: true });
     const deadline = Date.now() + this.cfg.lockTimeoutMs;
     for (;;) {
       try {
         const fd = fs.openSync(this.lockFile, "wx", 0o600);
-        fs.writeSync(fd, `${process.pid}\n`);
+        fs.writeSync(fd, token);
         fs.closeSync(fd);
         return;
       } catch (e) {
@@ -236,7 +261,10 @@ export class ContextStore {
     }
   }
 
-  private release(): void {
+  private release(token: string): void {
+    // Only remove the lock if it is still ours: after a stale-lock break it may already
+    // belong to another process, and unlinking it would expose their critical section.
+    if (!this.owns(token)) return;
     try {
       fs.unlinkSync(this.lockFile);
     } catch {

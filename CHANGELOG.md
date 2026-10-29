@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.2.0
+
+- `search_context` now works before `load_context`, as the protocol, README and enforcement hooks already stated — it is the documented exception to the load-first gate. Writes stay gated.
+- After `save_summary`, the next `load_context` starts a new session instead of silently reusing the completed one, so checkpoints land on a session that is still open.
+- Store lock hardening: the lock file carries an ownership token. Releasing only removes a lock still owned by this process, and a write is refused if another process broke our stale lock and took over mid-operation — previously a paused writer could unlock someone else's critical section.
+- package.json gains `repository`, `homepage` and `bugs` fields, so the npm page cross-links the GitHub repo, plus a `common context mcp` keyword.
+
 ## 3.1.1
 
 - Fix: a tool call refused by the enforcement gate is no longer recorded as a new failure. Before this, each refusal replaced the pending error with the refusal text, so agents (seen in OpenCode) saw every tool "fail" with a confusing, changing message.
