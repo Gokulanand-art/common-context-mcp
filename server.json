@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Gokulanand-art/common-context-mcp",
+  "description": "Shared, append-only context store for AI agents over MCP: checkpoints, failures, claims, handoffs.",
+  "repository": {
+    "url": "https://github.com/Gokulanand-art/common-context-mcp",
+    "source": "github"
+  },
+  "version": "3.2.2",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "common-context-mcp",
+      "version": "3.2.2",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

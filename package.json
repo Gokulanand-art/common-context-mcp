@@ -2,7 +2,7 @@
   "name": "common-context-mcp",
   "version": "3.2.1",
   "description": "Shared, append-only context store for AI agents over MCP: checkpoints, failures, claims, handoffs, crash recovery. Multi-process safe.",
-  "mcpName": "io.github.gokulanand-art/common-context-mcp",
+  "mcpName": "io.github.Gokulanand-art/common-context-mcp",
   "main": "dist/index.js",
   "repository": {
     "type": "git",
