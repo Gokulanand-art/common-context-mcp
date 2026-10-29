@@ -8,6 +8,10 @@
 
 Agents checkpoint their work, record failures, claim files, hand off tasks, and recover after crashes — so the next agent starts exactly where the last one stopped.
 
+**common context MCP** (also published as [`common-context-mcp`](https://www.npmjs.com/package/common-context-mcp)) gives every agent on your machine one shared memory file — one common context that Claude Code, Codex, Cursor, Gemini and OpenCode all read and write.
+
+📦 **npm:** [`npm install -g common-context-mcp`](https://www.npmjs.com/package/common-context-mcp) · 💻 **GitHub:** [Gokulanand-art/common-context-mcp](https://github.com/Gokulanand-art/common-context-mcp)
+
 <br/>
 
 [![npm version](https://img.shields.io/npm/v/common-context-mcp.svg?color=blue&label=version)](https://www.npmjs.com/package/common-context-mcp)
