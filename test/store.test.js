@@ -70,6 +70,33 @@ test("a v1 store is upgraded in place on write, keeping its data", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test("release never removes a lock another process has taken over", () => {
+  const { dir, file } = tempStore();
+  const lock = `${file}.lock`;
+  const store = new ContextStore(loadConfig({ CONTEXT_MCP_FILE: file }));
+
+  // We hold the lock...
+  store.acquire("mine");
+  assert.equal(fs.existsSync(lock), true);
+  // ...another process breaks it as stale and takes over...
+  fs.writeFileSync(lock, "thief");
+  // ...so our release must leave their lock alone.
+  store.release("mine");
+  assert.equal(fs.existsSync(lock), true, "foreign lock must survive our release");
+  assert.throws(() => store.assertOwner("mine"), StoreError, "lost ownership must be detected before writing");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("release removes the lock while we still own it", () => {
+  const { dir, file } = tempStore();
+  const lock = `${file}.lock`;
+  const store = new ContextStore(loadConfig({ CONTEXT_MCP_FILE: file }));
+  store.acquire("mine");
+  store.release("mine");
+  assert.equal(fs.existsSync(lock), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("a stale lock from a crashed process is recovered", () => {
   const { dir, file } = tempStore();
   const lock = `${file}.lock`;

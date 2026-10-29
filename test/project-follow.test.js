@@ -43,9 +43,11 @@ test("the server follows the client's workspace folder and keeps one store per f
     const storeA = JSON.parse(fs.readFileSync(path.join(a, "common-context.json"), "utf-8"));
     assert.ok(storeA.contexts["fact.a"], "A's fact is in A's store");
 
-    // Switch the workspace to B. The old session does not carry over, so loading is required again.
+    // Switch the workspace to B. The old session does not carry over, so writing is
+    // required to wait for a fresh load_context. (search_context is the documented
+    // exception and is allowed before load, so a write tool probes the gate here.)
     roots.current = b;
-    const blocked = await client.callTool({ name: "search_context", arguments: { query: "A" } });
+    const blocked = await client.callTool({ name: "save_context", arguments: { key: "probe", value: "x" } });
     assert.equal(blocked.isError, true);
     assert.match(text(blocked), /load_context/);
 
