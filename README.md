@@ -227,3 +227,6 @@ See [CHANGELOG.md](CHANGELOG.md) for release history and [LICENSE](LICENSE) for 
 ## License
 
 [MIT](LICENSE)
+
+
+[![M8ven Score](https://m8ven.ai/badge/mcp/gokulanand-art-common-context-mcp-cak50h?v=6eab291c7a11ee99805dfe55c51618be)](https://m8ven.ai/mcp/gokulanand-art-common-context-mcp-cak50h?s=readme)
