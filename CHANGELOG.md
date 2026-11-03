@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.2.0
+## 3.3.0
 
 - Setup now also configures **Kilo Code**, **Cline**, **Goose** and **Freebuff**: the MCP server and the protocol block, with a backup of every file it changes. Goose's `config.yaml` is edited as text inside a managed block, so the rest of the file is untouched. Kilo gets the protocol file added to its `instructions` list.
 - **Aider** is listed but never written: it has no MCP client, so it could not call the tools. Setup says so.
