@@ -105,6 +105,8 @@ The server sends these instructions to every connected agent. Follow them in ord
 | `get_audit_trail` | Recent sessions, failures, claims — most recent first | ✓ |
 | `resume_session` | Take over an interrupted session (refuses completed/live ones) | |
 | `session_status` | Store health: size, counts, interrupted sessions, estimated tokens | ✓ |
+| `sync_status` | Google Drive sync status (login, token, oauth config) | ✓ |
+| `sync_now` | Force sync with Google Drive: pull if remote newer, then push local | |
 
 > Every tool except `load_context` and `search_context` requires `load_context` to have run first in that session.
 
@@ -148,6 +150,8 @@ Text outside the managed block is never touched; reruns replace only that block.
 | `CONTEXT_MCP_LOG` | `text` | `text` or `json` log lines on stderr |
 | `CONTEXT_MCP_NO_SETUP` | unset | Skip setup prompt after global install |
 | `CONTEXT_MCP_NO_HOOKS` | unset | Skip Claude Code enforcement hooks in `--yes` mode |
+| `GOOGLE_CLIENT_ID` | (from ~/.aura/google-oauth.env) | Google OAuth client ID (Desktop app type) |
+| `GOOGLE_CLIENT_SECRET` | (from ~/.aura/google-oauth.env) | Google OAuth client secret |
 | `CONTEXT_MCP_ENFORCE` | unset | Set to `0` to turn off Claude Code enforcement at runtime |
 
 ---
@@ -159,6 +163,27 @@ Text outside the managed block is never touched; reruns replace only that block.
 * **Resuming.** `resume_session` refuses completed sessions and sessions another live agent is heartbeating — two agents can't drive the same session.
 
 If a task involves long silent stretches, call `save_context` or `session_status` periodically, or raise `CONTEXT_MCP_STALE_MINUTES`.
+
+---
+
+## ☁️ Google Drive sync (optional, cross-machine)
+
+Sign in with a Google account to store `common-context.json` in your Drive's hidden app folder, so the same context is available on every machine.
+
+```bash
+common-context-mcp login      # opens Google consent in your browser
+common-context-mcp status     # shows login/token state
+common-context-mcp sync       # force pull + push now
+common-context-mcp logout
+```
+
+- Scope is `drive.appdata` only (a hidden app folder; counts toward your 15 GB, nothing lands in My Drive).
+- Local file stays primary and works offline. `load_context` pulls from Drive when the remote is newer; writes push back (debounced ~500 ms).
+- When logged in with no explicit `CONTEXT_MCP_FILE`/`CONTEXT_MCP_PROJECT_DIR`, the store defaults to `~/.config/common-context-mcp/common-context.json` (global, synced). Explicit env vars keep per-project mode.
+- Conflict strategy: last write wins by `modifiedTime`.
+- OAuth client credentials are read from `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (or `AURA_*`) env vars, or `~/.aura/google-oauth.env` / `~/.config/common-context-mcp/oauth.env`.
+
+Two extra MCP tools: `sync_status` (read-only) and `sync_now`.
 
 ---
 

@@ -5,6 +5,7 @@ import { createServer, VERSION } from "./server.js";
 import { loadConfig } from "./config.js";
 import { runDoctor, runTokenReport } from "./doctor.js";
 import { runHook } from "./hooks.js";
+import { login, clearTokens, syncStatus, isLoggedIn, flushPendingPush, pushNow } from "./google.js";
 
 const HELP = `common-context-mcp ${VERSION}
 Shared, append-only context store for AI agents (MCP over stdio).
@@ -28,6 +29,24 @@ Environment:
 `;
 
 const arg = process.argv[2];
+
+if (arg === "login") {
+  login().then(() => process.exit(0)).catch(e => { console.error(e.message); process.exit(1); });
+  // keep process alive
+}
+if (arg === "logout") {
+  clearTokens();
+  process.stdout.write("Logged out. Tokens removed.\n");
+  process.exit(0);
+}
+if (arg === "sync") {
+  const cfg = loadConfig();
+  pushNow(cfg.file).then(r => { process.stdout.write(`push: ${r.pushed ? "yes" : "no"} (${r.reason})\n`); process.exit(0); }).catch(e => { console.error(e.message); process.exit(1); });
+}
+if (arg === "status") {
+  process.stdout.write(`Logged in: ${isLoggedIn() ? "yes" : "no"}\n${syncStatus()}\n`);
+  process.exit(0);
+}
 if (arg === "--version" || arg === "-v") {
   process.stdout.write(`${VERSION}\n`);
   process.exit(0);
@@ -50,7 +69,7 @@ async function main(): Promise<void> {
 
   const shutdown = (signal: string) => {
     log.info(`${signal} received, shutting down`);
-    server.close().finally(() => process.exit(0));
+    flushPendingPush().finally(() => server.close().finally(() => process.exit(0)));
   };
   process.once("SIGINT", () => shutdown("SIGINT"));
   process.once("SIGTERM", () => shutdown("SIGTERM"));
@@ -63,9 +82,9 @@ async function main(): Promise<void> {
   log.info(`${VERSION} running on stdio (store: ${config.file})`);
 }
 
-if (arg === "hook") {
-  // Hooks run per Claude Code event and must not start the MCP server.
-  runHook(process.argv[3]).then(() => process.exit(0));
+if (arg === "hook" || arg === "login" || arg === "logout" || arg === "sync" || arg === "status") {
+  // These subcommands must not start the MCP server.
+  if (arg === "hook") runHook(process.argv[3]).then(() => process.exit(0));
 } else {
   main().catch(err => {
     log.error(`fatal: ${err instanceof Error ? err.message : String(err)}`);

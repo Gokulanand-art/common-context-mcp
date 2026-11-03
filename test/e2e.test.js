@@ -26,7 +26,7 @@ const call = async (client, name, args = {}) => {
   return { text: r.content.map(c => c.text).join("\n"), isError: !!r.isError };
 };
 
-test("exposes all 15 tools with annotations", async () => {
+test("exposes all 17 tools with annotations", async () => {
   const { dir, file } = tempStore();
   const c = await connect(file, "a");
   const { tools } = await c.listTools();
@@ -34,7 +34,7 @@ test("exposes all 15 tools with annotations", async () => {
   assert.deepEqual(names, [
     "broadcast", "claim_area", "get_audit_trail", "get_patterns", "handoff", "list_claims",
     "load_context", "record_success", "release_area", "resume_session", "save_context",
-    "save_failure", "save_summary", "search_context", "session_status",
+    "save_failure", "save_summary", "search_context", "session_status", "sync_now", "sync_status",
   ]);
   const search = tools.find(t => t.name === "search_context");
   assert.equal(search.annotations.readOnlyHint, true);

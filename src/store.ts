@@ -1,5 +1,6 @@
 import { log } from "./log.js";
 import * as fs from "node:fs";
+import { schedulePush } from "./google.js";
 import * as path from "node:path";
 import type { Config } from "./config.js";
 
@@ -230,6 +231,7 @@ export class ContextStore {
     const tmp = `${this.cfg.file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
     fs.renameSync(tmp, this.cfg.file);
+    try { schedulePush(this.cfg.file); } catch {}
   }
 
   private acquire(token: string): void {

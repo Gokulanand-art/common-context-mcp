@@ -15,6 +15,7 @@ import {
 import { excerpt, renderLoad, type Detail } from "./render.js";
 import { redact } from "./redact.js";
 import { log } from "./log.js";
+import { pullIfNewer, pushNow, syncStatus, isLoggedIn } from "./google.js";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const VERSION: string = (require("../package.json") as { version: string }).version;
@@ -132,7 +133,7 @@ export function createServer(initial: Config = loadConfig()): McpServer {
     name: string,
     description: string,
     shape: S,
-    handler: (args: z.output<z.ZodObject<S>>) => ToolResult,
+    handler: (args: z.output<z.ZodObject<S>>) => ToolResult | Promise<ToolResult>,
     opts: { readOnly?: boolean; requiresLoad?: boolean } = {}
   ): void {
     const requiresLoad = opts.requiresLoad !== false;
@@ -151,7 +152,8 @@ export function createServer(initial: Config = loadConfig()): McpServer {
           if (requiresLoad && !state.loaded) {
             return fail("ERROR: You must call load_context() first before using any other tool. This is MANDATORY.");
           }
-          return handler(args);
+          const r = handler(args);
+          return r instanceof Promise ? await r : r;
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           log.error(`${name} failed: ${msg}`);
@@ -168,8 +170,9 @@ export function createServer(initial: Config = loadConfig()): McpServer {
     {
       detail: z.enum(["brief", "full"]).optional().describe("brief (default) or full, which is everything in the store"),
     },
-    ({ detail }) => {
+    async ({ detail }) => {
       const mode: Detail = detail === "full" ? "full" : "brief";
+      try { await pullIfNewer(config.file); } catch (e) { log.warn(`pull failed: ${(e as Error).message}`); }
       // Re-read only while this process's session is still open. After save_summary the session is
       // completed, so loading starts the next session instead of silently reusing a closed one.
       if (state.loaded && state.sessionId && !state.completed) {
@@ -633,6 +636,31 @@ export function createServer(initial: Config = loadConfig()): McpServer {
       return ok(lines.join("\n"));
     },
     { readOnly: true }
+  );
+
+  // ─── sync_status ─────────────────────────────────────────
+  register(
+    "sync_status",
+    "Show Google Drive sync status (login, token, oauth config). Read-only.",
+    {},
+    () => {
+      return ok(`Logged in: ${isLoggedIn() ? "yes" : "no"}\n${syncStatus()}`);
+    },
+    { readOnly: true, requiresLoad: false }
+  );
+
+  // ─── sync_now ─────────────────────────────────────────────
+  register(
+    "sync_now",
+    "Force a sync with Google Drive: pull if remote is newer, then push local. Requires login.",
+    {},
+    async () => {
+      const g = await import("./google.js");
+      const pull = await g.pullIfNewer(config.file);
+      const push = await g.pushNow(config.file);
+      return ok(`pull: ${pull.pulled ? "yes" : "no"} (${pull.reason})\npush: ${push.pushed ? "yes" : "no"} (${push.reason})`);
+    },
+    { requiresLoad: false }
   );
 
   return server;

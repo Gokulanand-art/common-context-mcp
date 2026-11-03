@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.4.0
+
+- **Google Drive sync.** New `common-context-mcp login` (Google OAuth2, loopback browser flow) grants read+write to the app's hidden Drive folder (`drive.appdata` scope, counts toward the user's 15 GB). The context JSON is stored there, so the same context is available on any machine after login.
+- Local file stays primary (works offline); `load_context` pulls from Drive when the remote is newer, writes push back (debounced). Conflict strategy: last write wins by `modifiedTime`.
+- When logged in with no explicit `CONTEXT_MCP_FILE`/`CONTEXT_MCP_PROJECT_DIR`, the store defaults to `~/.config/common-context-mcp/common-context.json` (global, synced). Explicit env vars keep per-project mode.
+- New CLI subcommands: `login`, `logout`, `sync`, `status`. New MCP tools: `sync_status`, `sync_now`.
+- New OAuth env vars: `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (also `AURA_*`), read from env or `~/.aura/google-oauth.env` / `~/.config/common-context-mcp/oauth.env`.
+
+
 ## 3.3.1
 
 - Version bump only. No code changes since 3.3.0.
