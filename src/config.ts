@@ -1,4 +1,5 @@
 import * as os from "node:os";
+import { isLoggedIn } from "./google.js";
 import * as path from "node:path";
 
 export interface Config {
@@ -41,8 +42,19 @@ export const STORE_FILE_NAME = "common-context.json";
  * otherwise the process working directory. CONTEXT_MCP_FILE, if set, names the file directly.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const projectDir = env.CONTEXT_MCP_PROJECT_DIR?.trim() || process.cwd();
-  const file = env.CONTEXT_MCP_FILE?.trim() || path.join(projectDir, STORE_FILE_NAME);
+  const explicitFile = env.CONTEXT_MCP_FILE?.trim();
+  const explicitDir = env.CONTEXT_MCP_PROJECT_DIR?.trim();
+  let projectDir = explicitDir || process.cwd();
+  let file = explicitFile;
+  // When logged in and no explicit override, use a global synced store so context
+  // is shared across machines. Explicit env vars always win (per-project mode).
+  if (!explicitFile && !explicitDir && isLoggedIn()) {
+    const globalDir = path.join(os.homedir(), ".config", "common-context-mcp");
+    try { require("node:fs").mkdirSync(globalDir, { recursive: true }); } catch {}
+    file = path.join(globalDir, STORE_FILE_NAME);
+    projectDir = globalDir;
+  }
+  file = file || path.join(projectDir, STORE_FILE_NAME);
   return {
     file: path.resolve(file),
     agentId:
