@@ -8,7 +8,7 @@
 
 Agents checkpoint their work, record failures, claim files, hand off tasks, and recover after crashes — so the next agent starts exactly where the last one stopped.
 
-**common context MCP** (also published as [`common-context-mcp`](https://www.npmjs.com/package/common-context-mcp)) gives every agent on your machine one shared memory file — one common context that Claude Code, Codex, Cursor, Gemini and OpenCode all read and write.
+**common context MCP** (also published as [`common-context-mcp`](https://www.npmjs.com/package/common-context-mcp)) gives every agent on your machine one shared memory file — one common context that Claude Code, Codex, Cursor, Gemini, OpenCode, Kilo Code, Cline, Goose and Freebuff all read and write.
 
 📦 **npm:** [`npm install -g common-context-mcp`](https://www.npmjs.com/package/common-context-mcp) · 💻 **GitHub:** [Gokulanand-art/common-context-mcp](https://github.com/Gokulanand-art/common-context-mcp)
 
@@ -46,7 +46,7 @@ npm install -g common-context-mcp
 common-context-mcp-setup
 ```
 
-The setup step detects your AI tools (Claude Code, Codex, Cursor, Gemini, OpenCode) and wires up the MCP server + protocol block for each one you pick.
+The setup step detects your AI tools (Claude Code, Codex, Cursor, Gemini, OpenCode, Kilo Code, Cline, Goose, Freebuff) and wires up the MCP server + protocol block for each one you pick.
 
 ### 2. Use it in any project
 
@@ -119,6 +119,13 @@ The server sends these instructions to every connected agent. Follow them in ord
 | Cursor | `~/.cursor/mcp.json` | Manual paste from setup | `~/.cursor/hooks.json` |
 | Gemini CLI | `~/.gemini/settings.json` | `~/.gemini/GEMINI.md` | `hooks` in settings.json |
 | OpenCode | `~/.config/opencode/opencode.json` | `~/.config/opencode/AGENTS.md` | Plugin at `~/.config/opencode/plugins/common-context/index.js` |
+| Kilo Code | `~/.config/kilo/kilo.json` (or `kilo.jsonc`) | protocol file added to its `instructions` list | Rules only |
+| Cline | `~/.cline/data/settings/cline_mcp_settings.json` and the VS Code extension's `cline_mcp_settings.json` when present | `~/Documents/Cline/Rules/common-context.md` | Rules only |
+| Goose | `~/.config/goose/config.yaml` (managed block under `extensions:`) | `~/.config/goose/.goosehints` | Rules only |
+| Freebuff | `~/.agents/mcp.json` | `~/.AGENTS.md` | Rules only |
+| Aider | Not configured: Aider has no MCP client | none | none |
+
+Kilo Code, Cline, Goose and Freebuff do not have hooks yet, so for them the protocol is advice the model follows, not a gate. A `kilo.jsonc` with comments is refused rather than rewritten: add the server by hand in that case. Freebuff shares Codebuff's MCP loader; its paths come from the Codebuff source and were not run against a live Freebuff session.
 
 Text outside the managed block is never touched; reruns replace only that block.
 

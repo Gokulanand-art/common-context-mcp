@@ -11,7 +11,9 @@
  *
  * Locations were checked against the tools' documentation and, for Codex, against
  * the installed binary (see README). Cursor's global User Rules can only be set in
- * its settings UI, so Cursor gets a manual step instead of a file write.
+ * its settings UI, so Cursor gets a manual step instead of a file write. Freebuff,
+ * Kilo Code, Cline and Goose were checked against their docs and source; Aider has
+ * no MCP client, so it is listed but never written.
  */
 const fs = require("fs");
 const path = require("path");
@@ -215,6 +217,79 @@ function codexRulesFile() {
   return exists(override) ? override : path.join(codexHome(), "AGENTS.md");
 }
 
+// ─── YAML config (Goose) ─────────────────────────────────────────────
+
+const YAML_START = "# common-context:start";
+const YAML_END = "# common-context:end";
+
+const gooseBlock = () =>
+  [
+    YAML_START,
+    `  ${SERVER_KEY}:`,
+    `    name: ${SERVER_KEY}`,
+    `    cmd: ${COMMAND}`,
+    "    args: []",
+    "    enabled: true",
+    "    envs: {}",
+    "    type: stdio",
+    "    timeout: 300",
+    YAML_END,
+  ].join("\n");
+
+/**
+ * Adds the server under the top-level `extensions:` map of Goose's config.yaml as a managed block.
+ * The file is edited as text so every comment and key the user has stays as it was. A block-style
+ * `extensions:` map is required; an inline one (`extensions: {}`) is refused rather than guessed at.
+ */
+function withGooseServer(text) {
+  const start = text.indexOf(YAML_START);
+  const end = text.indexOf(YAML_END);
+  let rest = text;
+  if (start !== -1 && end > start) {
+    const stop = text[end + YAML_END.length] === "\n" ? end + YAML_END.length + 1 : end + YAML_END.length;
+    rest = text.slice(0, start) + text.slice(stop);
+  }
+  if (new RegExp(`^ {2}("?)${SERVER_KEY}\\1:`, "m").test(rest)) {
+    throw new Error(`the Goose config already defines an extension named ${SERVER_KEY} outside the managed block; edit it by hand`);
+  }
+  const header = /^extensions:[ \t]*(#.*)?$/m.exec(rest);
+  if (header) {
+    const at = header.index + header[0].length;
+    return rest.slice(0, at) + "\n" + gooseBlock() + rest.slice(at);
+  }
+  if (/^extensions:/m.test(rest)) {
+    throw new Error("the Goose config writes `extensions:` inline; add the common-context extension by hand, see README");
+  }
+  const body = rest.replace(/\s*$/, "");
+  return (body ? body + "\n" : "") + "extensions:\n" + gooseBlock() + "\n";
+}
+
+function applyYamlMcp(file) {
+  const before = readText(file);
+  return writeIfChanged(file, before, withGooseServer(before));
+}
+
+// ─── Kilo Code: rules are a list of files in the config's `instructions` key ───
+
+function withInstruction(config, instructionFile) {
+  const next = JSON.parse(JSON.stringify(config));
+  const list = Array.isArray(next.instructions) ? next.instructions : [];
+  if (next.instructions !== undefined && !Array.isArray(next.instructions)) {
+    throw new Error('the Kilo config has an "instructions" value that is not a list; add the protocol file by hand');
+  }
+  if (!list.includes(instructionFile)) list.push(instructionFile);
+  next.instructions = list;
+  return next;
+}
+
+function applyKiloInstructions(file) {
+  writeProtocolFile();
+  const before = readJsonStrict(file);
+  const after = withInstruction(before, PROTOCOL_FILE);
+  if (JSON.stringify(before) === JSON.stringify(after)) return "unchanged";
+  return writeIfChanged(file, readText(file), JSON.stringify(after, null, 2) + "\n");
+}
+
 // ─── Markdown rules / system prompt files ─────────────────────────────
 
 const markdownBlock = () => `${MD_START}\n${PROTOCOL}\n${MD_END}`;
@@ -397,6 +472,47 @@ function applyOpenCodePlugin() {
   return writeIfChanged(OPENCODE_PLUGIN, before, openCodePlugin());
 }
 
+// ─── Locations that depend on what is installed ───────────────────────
+
+const TOOL_NAMES = [
+  "load_context", "save_context", "save_summary", "save_failure", "record_success", "search_context",
+  "claim_area", "release_area", "list_claims", "broadcast", "handoff", "get_patterns",
+  "get_audit_trail", "resume_session", "session_status",
+];
+
+/** Kilo reads kilo.jsonc or kilo.json from ~/.config/kilo. An existing file wins; a new one is plain JSON. */
+function kiloConfig() {
+  const dir = path.join(HOME, ".config", "kilo");
+  for (const name of ["kilo.jsonc", "kilo.json"]) if (exists(path.join(dir, name))) return path.join(dir, name);
+  return path.join(dir, "kilo.json");
+}
+
+/** Cline's VS Code extension keeps its settings in VS Code's global storage. */
+function clineExtensionDir() {
+  const code =
+    process.platform === "darwin" ? path.join(HOME, "Library", "Application Support", "Code")
+    : process.platform === "win32" ? path.join(process.env.APPDATA || path.join(HOME, "AppData", "Roaming"), "Code")
+    : path.join(process.env.XDG_CONFIG_HOME || path.join(HOME, ".config"), "Code");
+  return path.join(code, "User", "globalStorage", "saoudrizwan.claude-dev");
+}
+
+/** Every Cline settings file that exists here: the CLI's and the VS Code extension's. The CLI's is the fallback. */
+function clineSettingsFiles() {
+  const cli = process.env.CLINE_MCP_SETTINGS_PATH || path.join(HOME, ".cline", "data", "settings", "cline_mcp_settings.json");
+  const ext = path.join(clineExtensionDir(), "settings", "cline_mcp_settings.json");
+  const files = [];
+  if (exists(path.join(HOME, ".cline")) || which("cline") || process.env.CLINE_MCP_SETTINGS_PATH) files.push(cli);
+  if (exists(clineExtensionDir())) files.push(ext);
+  return files.length ? files : [cli];
+}
+
+/** Where a tool's MCP registration goes, for the setup listing. */
+function describeTarget(agent) {
+  if (agent.unsupported) return "not supported (no MCP client)";
+  const m = agent.mcp;
+  return m.files ? m.files().join(", ") : m.file;
+}
+
 // ─── Registry ─────────────────────────────────────────────────────────
 
 /**
@@ -449,6 +565,44 @@ const AGENTS = [
     rules: { file: path.join(HOME, ".config", "opencode", "AGENTS.md") },
     hooks: "opencode",
   },
+  {
+    id: "kilo",
+    name: "Kilo Code",
+    detect: () => exists(path.join(HOME, ".config", "kilo")) || exists(path.join(HOME, ".kilocode")) || which("kilo") || which("kilocode"),
+    mcp: { kind: "json", files: () => [kiloConfig()], key: "mcp", entry: { type: "local", command: [COMMAND], enabled: true } },
+    rules: { kind: "kilo", file: () => kiloConfig() },
+  },
+  {
+    id: "cline",
+    name: "Cline",
+    detect: () => exists(path.join(HOME, ".cline")) || exists(clineExtensionDir()) || which("cline"),
+    mcp: { kind: "json", files: clineSettingsFiles, key: "mcpServers", entry: { command: COMMAND, args: [], disabled: false, autoApprove: TOOL_NAMES } },
+    rules: { file: path.join(HOME, "Documents", "Cline", "Rules", "common-context.md") },
+  },
+  {
+    id: "goose",
+    name: "Goose",
+    detect: () => exists(path.join(HOME, ".config", "goose")) || which("goose"),
+    mcp: { kind: "yaml", file: path.join(HOME, ".config", "goose", "config.yaml") },
+    rules: { file: path.join(HOME, ".config", "goose", ".goosehints") },
+  },
+  {
+    id: "freebuff",
+    name: "Freebuff",
+    detect: () => exists(path.join(HOME, ".config", "manicode")) || exists(path.join(HOME, ".config", "freebuff")) || which("freebuff"),
+    // Freebuff shares Codebuff's SDK: ~/.agents/mcp.json is read, and the schema is strict.
+    mcp: { kind: "json", file: path.join(HOME, ".agents", "mcp.json"), key: "mcpServers", entry: { type: "stdio", command: COMMAND, args: [], env: {} } },
+    // Its user-level instructions file is ~/.AGENTS.md (read before ~/.CLAUDE.md).
+    rules: { file: path.join(HOME, ".AGENTS.md") },
+  },
+  {
+    id: "aider",
+    name: "Aider",
+    detect: () => exists(path.join(HOME, ".aider.conf.yml")) || which("aider"),
+    mcp: null,
+    rules: null,
+    unsupported: "Aider has no MCP client, so it cannot call common-context tools. Nothing was written; use a tool that supports MCP.",
+  },
 ];
 
 /** Each hook-capable tool's installer. Codex's hooks are written with its MCP block, so it has none here. */
@@ -466,16 +620,24 @@ const HOOK_INSTALLERS = {
  */
 function configureAgent(agent, { enableHooks = false } = {}) {
   const results = [];
+  if (agent.unsupported) return [{ label: "not supported", status: "manual", path: agent.unsupported }];
   const m = agent.mcp;
   if (m.kind === "json") {
-    results.push({ label: "MCP server", status: applyJsonMcp(m.file, m.key, m.entry), path: m.file });
+    for (const file of m.files ? m.files() : [m.file]) {
+      results.push({ label: "MCP server", status: applyJsonMcp(file, m.key, m.entry), path: file });
+    }
+  } else if (m.kind === "yaml") {
+    results.push({ label: "MCP server", status: applyYamlMcp(m.file), path: m.file });
   } else {
     // Codex keeps its hooks in the same managed block as the MCP entry.
     const withHooks = enableHooks && agent.hooks === "codex";
     results.push({ label: withHooks ? "MCP server + hooks" : "MCP server", status: applyTomlMcp(m.file, { withHooks }), path: m.file });
   }
 
-  if (agent.rules) {
+  if (agent.rules && agent.rules.kind === "kilo") {
+    const file = agent.rules.file();
+    results.push({ label: "protocol rules (instructions)", status: applyKiloInstructions(file), path: file });
+  } else if (agent.rules) {
     const file = agent.rules.resolve ? agent.rules.resolve() : agent.rules.file;
     results.push({ label: "protocol rules", status: applyRules(file), path: file });
   } else {
@@ -507,6 +669,12 @@ module.exports = {
   codexRulesFile,
   withCursorHooks,
   withGeminiHooks,
+  withGooseServer,
+  withInstruction,
+  describeTarget,
+  kiloConfig,
+  clineSettingsFiles,
+  TOOL_NAMES,
   openCodePlugin,
   CURSOR_HOOKS,
   OPENCODE_PLUGIN,

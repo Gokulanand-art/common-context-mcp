@@ -52,8 +52,10 @@ test("JSON MCP merge: replaces the legacy command and leaves a custom entry alon
   assert.equal(custom.mcpServers["common-context"].command, "/my/path");
 });
 
-test("registry covers exactly the five supported tools", () => {
-  assert.deepEqual(agents.AGENTS.map(a => a.id).sort(), ["claude-code", "codex", "cursor", "gemini", "opencode"]);
+test("registry covers exactly the ten listed tools, and Aider is the one that cannot be configured", () => {
+  assert.deepEqual(agents.AGENTS.map(a => a.id).sort(), ["aider", "claude-code", "cline", "codex", "cursor", "freebuff", "gemini", "goose", "kilo", "opencode"]);
+  assert.ok(agents.AGENTS.find(a => a.id === "aider").unsupported, "Aider has no MCP client");
+  assert.deepEqual(agents.AGENTS.filter(a => a.unsupported).map(a => a.id), ["aider"]);
   assert.equal(agents.AGENTS.find(a => a.id === "cursor").rules, null, "Cursor rules are a manual step");
   assert.deepEqual(agents.AGENTS.filter(a => a.hooks).map(a => a.id).sort(), ["claude-code", "codex", "cursor", "gemini", "opencode"], "all five tools get enforcement");
 });
@@ -92,7 +94,7 @@ test("no tool detected: nothing is written and supported tools are listed", () =
     encoding: "utf-8",
   });
   assert.equal(r.status, 0);
-  assert.match(r.stderr, /Supported tools: Claude Code, Cursor, Codex CLI, Gemini CLI, OpenCode/);
+  assert.match(r.stderr, /Supported tools: Claude Code, Cursor, Codex CLI, Gemini CLI, OpenCode, Kilo Code, Cline, Goose, Freebuff, Aider/);
   assert.equal(fs.existsSync(path.join(dir, ".codex")), false);
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -280,4 +282,59 @@ test("OpenCode execute and search calls that reach common-context count as our M
   assert.equal(wrappedMcpName("search", { query: "load_context", namespace: "common-context" }), "load_context");
   assert.equal(wrappedMcpName("execute", { code: "echo hi" }), null, "other code is not ours");
   assert.equal(wrappedMcpName("bash", { code: 'tools["common-context"].load_context()' }), null, "only wrapper tools");
+});
+
+test("Goose YAML: adds a managed extension under extensions:, keeps the rest, and is idempotent", () => {
+  const text = "GOOSE_PROVIDER: openai\n# my note\nextensions:\n  developer:\n    enabled: true\n    type: builtin\n    name: developer\n";
+  const out = agents.withGooseServer(text);
+  assert.match(out, /GOOSE_PROVIDER: openai\n# my note\nextensions:\n# common-context:start\n  common-context:\n    name: common-context\n    cmd: common-context-mcp\n    args: \[\]\n    enabled: true\n    envs: \{\}\n    type: stdio\n    timeout: 300\n# common-context:end\n  developer:/);
+  assert.equal(agents.withGooseServer(out), out, "idempotent");
+  assert.match(agents.withGooseServer(""), /^extensions:\n# common-context:start/, "a new file gets the key");
+});
+
+test("Goose YAML: refuses a user-defined extension of the same name and an inline extensions map", () => {
+  assert.throws(() => agents.withGooseServer("extensions:\n  common-context:\n    cmd: mine\n"), /already defines/);
+  assert.throws(() => agents.withGooseServer("extensions: {}\n"), /inline/);
+});
+
+test("Kilo: the protocol file is added to the instructions list once, other keys are kept", () => {
+  const out = agents.withInstruction({ mcp: { x: {} }, instructions: ["a.md"] }, "/p/PROTOCOL.md");
+  assert.deepEqual(out.instructions, ["a.md", "/p/PROTOCOL.md"]);
+  assert.deepEqual(out.mcp, { x: {} });
+  assert.deepEqual(agents.withInstruction(out, "/p/PROTOCOL.md").instructions, out.instructions, "idempotent");
+  assert.throws(() => agents.withInstruction({ instructions: "a.md" }, "/p"), /not a list/);
+});
+
+test("Freebuff entry matches Codebuff's strict stdio schema", () => {
+  const entry = agents.AGENTS.find(a => a.id === "freebuff").mcp.entry;
+  assert.deepEqual(Object.keys(entry).sort(), ["args", "command", "env", "type"]);
+});
+
+test("end to end over a fake home: Kilo, Cline, Goose and Freebuff are configured, Aider is left alone", () => {
+  const { dir } = tempStore();
+  for (const d of [".config/kilo", ".cline", ".config/goose", ".config/manicode"]) {
+    fs.mkdirSync(path.join(dir, d), { recursive: true });
+  }
+  fs.writeFileSync(path.join(dir, ".aider.conf.yml"), "dark-mode: true\n");
+  fs.writeFileSync(path.join(dir, ".config/goose/config.yaml"), "extensions:\n  developer:\n    type: builtin\n");
+  const env = { ...process.env, HOME: dir, XDG_CONFIG_HOME: path.join(dir, ".config"), PATH: "/nonexistent", npm_lifecycle_event: "", CONTEXT_MCP_NO_HOOKS: "1" };
+  delete env.CLINE_MCP_SETTINGS_PATH;
+  const r = spawnSync(process.execPath, [SETUP, "--yes"], { env, encoding: "utf-8" });
+  assert.equal(r.status, 0, r.stderr);
+
+  const kilo = JSON.parse(fs.readFileSync(path.join(dir, ".config/kilo/kilo.json"), "utf-8"));
+  assert.deepEqual(kilo.mcp["common-context"].command, ["common-context-mcp"]);
+  assert.ok(kilo.instructions.some(f => f.endsWith("PROTOCOL.md")));
+  const cline = JSON.parse(fs.readFileSync(path.join(dir, ".cline/data/settings/cline_mcp_settings.json"), "utf-8"));
+  assert.equal(cline.mcpServers["common-context"].command, "common-context-mcp");
+  assert.ok(cline.mcpServers["common-context"].autoApprove.includes("load_context"));
+  assert.match(fs.readFileSync(path.join(dir, "Documents/Cline/Rules/common-context.md"), "utf-8"), /common-context:start/);
+  assert.match(fs.readFileSync(path.join(dir, ".config/goose/config.yaml"), "utf-8"), /common-context:\n    name: common-context/);
+  assert.match(fs.readFileSync(path.join(dir, ".config/goose/.goosehints"), "utf-8"), /common-context:start/);
+  const fb = JSON.parse(fs.readFileSync(path.join(dir, ".agents/mcp.json"), "utf-8"));
+  assert.equal(fb.mcpServers["common-context"].type, "stdio");
+  assert.match(fs.readFileSync(path.join(dir, ".AGENTS.md"), "utf-8"), /common-context:start/);
+  assert.equal(fs.readFileSync(path.join(dir, ".aider.conf.yml"), "utf-8"), "dark-mode: true\n", "Aider config untouched");
+  assert.match(r.stderr, /Aider\n.*manual step.*no MCP client/s);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

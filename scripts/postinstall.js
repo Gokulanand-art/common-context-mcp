@@ -50,7 +50,7 @@ function detectAgents() {
 
 function printFound(detected) {
   log("  Detected AI tools:");
-  detected.forEach((a, i) => log(`    [${i + 1}] ${a.name}  →  ${a.mcp.file}`));
+  detected.forEach((a, i) => log(`    [${i + 1}] ${a.name}  →  ${agents.describeTarget(a)}`));
   log("");
 }
 

@@ -2,6 +2,12 @@
 
 ## 3.2.0
 
+- Setup now also configures **Kilo Code**, **Cline**, **Goose** and **Freebuff**: the MCP server and the protocol block, with a backup of every file it changes. Goose's `config.yaml` is edited as text inside a managed block, so the rest of the file is untouched. Kilo gets the protocol file added to its `instructions` list.
+- **Aider** is listed but never written: it has no MCP client, so it could not call the tools. Setup says so.
+- These four have no enforcement hooks, so the protocol is advice for them, not a gate.
+
+## 3.2.0
+
 - `search_context` now works before `load_context`, as the protocol, README and enforcement hooks already stated — it is the documented exception to the load-first gate. Writes stay gated.
 - After `save_summary`, the next `load_context` starts a new session instead of silently reusing the completed one, so checkpoints land on a session that is still open.
 - Store lock hardening: the lock file carries an ownership token. Releasing only removes a lock still owned by this process, and a write is refused if another process broke our stale lock and took over mid-operation — previously a paused writer could unlock someone else's critical section.
