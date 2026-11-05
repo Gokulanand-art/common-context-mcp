@@ -52,8 +52,8 @@ test("JSON MCP merge: replaces the legacy command and leaves a custom entry alon
   assert.equal(custom.mcpServers["common-context"].command, "/my/path");
 });
 
-test("registry covers exactly the ten listed tools, and Aider is the one that cannot be configured", () => {
-  assert.deepEqual(agents.AGENTS.map(a => a.id).sort(), ["aider", "claude-code", "cline", "codex", "cursor", "freebuff", "gemini", "goose", "kilo", "opencode"]);
+test("registry covers exactly the eleven listed tools, and Aider is the one that cannot be configured", () => {
+  assert.deepEqual(agents.AGENTS.map(a => a.id).sort(), ["aider", "claude-code", "cline", "codex", "cursor", "freebuff", "gemini", "goose", "hermes", "kilo", "opencode"]);
   assert.ok(agents.AGENTS.find(a => a.id === "aider").unsupported, "Aider has no MCP client");
   assert.deepEqual(agents.AGENTS.filter(a => a.unsupported).map(a => a.id), ["aider"]);
   assert.equal(agents.AGENTS.find(a => a.id === "cursor").rules, null, "Cursor rules are a manual step");
@@ -94,7 +94,7 @@ test("no tool detected: nothing is written and supported tools are listed", () =
     encoding: "utf-8",
   });
   assert.equal(r.status, 0);
-  assert.match(r.stderr, /Supported tools: Claude Code, Cursor, Codex CLI, Gemini CLI, OpenCode, Kilo Code, Cline, Goose, Freebuff, Aider/);
+  assert.match(r.stderr, /Supported tools: Claude Code, Cursor, Codex CLI, Gemini CLI, OpenCode, Kilo Code, Cline, Goose, Freebuff, Hermes Agent, Aider/);
   assert.equal(fs.existsSync(path.join(dir, ".codex")), false);
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -336,5 +336,31 @@ test("end to end over a fake home: Kilo, Cline, Goose and Freebuff are configure
   assert.match(fs.readFileSync(path.join(dir, ".AGENTS.md"), "utf-8"), /common-context:start/);
   assert.equal(fs.readFileSync(path.join(dir, ".aider.conf.yml"), "utf-8"), "dark-mode: true\n", "Aider config untouched");
   assert.match(r.stderr, /Aider\n.*manual step.*no MCP client/s);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Hermes YAML: adds a managed mcp_servers block, keeps the rest, and is idempotent", () => {
+  const text = "model:\n  default: x\n# note\nmcp_servers:\n  time:\n    command: uvx\n";
+  const out = agents.withHermesServer(text);
+  assert.match(out, /mcp_servers:\n# common-context:start\n  common-context:\n    command: common-context-mcp\n    args: \[\]\n# common-context:end\n  time:/);
+  assert.equal(agents.withHermesServer(out), out);
+  assert.match(agents.withHermesServer("model:\n  a: 1\n"), /model:\n  a: 1\nmcp_servers:\n# common-context:start/, "a missing map is appended");
+  assert.throws(() => agents.withHermesServer("mcp_servers: {}\n"), /inline/);
+  assert.throws(() => agents.withHermesServer("mcp_servers:\n  common-context:\n    command: mine\n"), /already defines/);
+});
+
+test("end to end over a fake home: Hermes gets its server in config.yaml and the protocol first in SOUL.md", () => {
+  const { dir } = tempStore();
+  fs.mkdirSync(path.join(dir, ".hermes"), { recursive: true });
+  fs.writeFileSync(path.join(dir, ".hermes/config.yaml"), "model:\n  default: x\n");
+  fs.writeFileSync(path.join(dir, ".hermes/SOUL.md"), "You are Hermes.\n");
+  const env = { ...process.env, HOME: dir, PATH: "/nonexistent", npm_lifecycle_event: "", CONTEXT_MCP_NO_HOOKS: "1" };
+  delete env.HERMES_HOME;
+  const r = spawnSync(process.execPath, [SETUP, "--yes"], { env, encoding: "utf-8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(fs.readFileSync(path.join(dir, ".hermes/config.yaml"), "utf-8"), /^model:\n  default: x\nmcp_servers:\n# common-context:start/);
+  const soul = fs.readFileSync(path.join(dir, ".hermes/SOUL.md"), "utf-8");
+  assert.match(soul, /^<!-- common-context:start -->/);
+  assert.match(soul, /You are Hermes\.\n$/);
   fs.rmSync(dir, { recursive: true, force: true });
 });

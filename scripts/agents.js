@@ -222,26 +222,21 @@ function codexRulesFile() {
 const YAML_START = "# common-context:start";
 const YAML_END = "# common-context:end";
 
-const gooseBlock = () =>
-  [
-    YAML_START,
-    `  ${SERVER_KEY}:`,
-    `    name: ${SERVER_KEY}`,
-    `    cmd: ${COMMAND}`,
-    "    args: []",
-    "    enabled: true",
-    "    envs: {}",
-    "    type: stdio",
-    "    timeout: 300",
-    YAML_END,
-  ].join("\n");
+const SERVER_BODY = {
+  // extension key -> the indented lines under `common-context:`
+  extensions: ["    name: common-context", `    cmd: ${COMMAND}`, "    args: []", "    enabled: true", "    envs: {}", "    type: stdio", "    timeout: 300"],
+  mcp_servers: [`    command: ${COMMAND}`, "    args: []"],
+};
+
+const yamlBlock = topKey => [YAML_START, `  ${SERVER_KEY}:`, ...SERVER_BODY[topKey], YAML_END].join("\n");
 
 /**
- * Adds the server under the top-level `extensions:` map of Goose's config.yaml as a managed block.
- * The file is edited as text so every comment and key the user has stays as it was. A block-style
- * `extensions:` map is required; an inline one (`extensions: {}`) is refused rather than guessed at.
+ * Adds the server under a top-level map (`extensions:` for Goose, `mcp_servers:` for Hermes) of a
+ * YAML config as a managed block. The file is edited as text so every comment and key the user has
+ * stays as it was. A block-style map is required; an inline one (`extensions: {}`) is refused
+ * rather than guessed at.
  */
-function withGooseServer(text) {
+function withYamlServer(text, topKey) {
   const start = text.indexOf(YAML_START);
   const end = text.indexOf(YAML_END);
   let rest = text;
@@ -250,23 +245,26 @@ function withGooseServer(text) {
     rest = text.slice(0, start) + text.slice(stop);
   }
   if (new RegExp(`^ {2}("?)${SERVER_KEY}\\1:`, "m").test(rest)) {
-    throw new Error(`the Goose config already defines an extension named ${SERVER_KEY} outside the managed block; edit it by hand`);
+    throw new Error(`the config already defines a server named ${SERVER_KEY} outside the managed block; edit it by hand`);
   }
-  const header = /^extensions:[ \t]*(#.*)?$/m.exec(rest);
+  const header = new RegExp(`^${topKey}:[ \\t]*(#.*)?$`, "m").exec(rest);
   if (header) {
     const at = header.index + header[0].length;
-    return rest.slice(0, at) + "\n" + gooseBlock() + rest.slice(at);
+    return rest.slice(0, at) + "\n" + yamlBlock(topKey) + rest.slice(at);
   }
-  if (/^extensions:/m.test(rest)) {
-    throw new Error("the Goose config writes `extensions:` inline; add the common-context extension by hand, see README");
+  if (new RegExp(`^${topKey}:`, "m").test(rest)) {
+    throw new Error(`the config writes \`${topKey}:\` inline; add the common-context server by hand, see README`);
   }
   const body = rest.replace(/\s*$/, "");
-  return (body ? body + "\n" : "") + "extensions:\n" + gooseBlock() + "\n";
+  return (body ? body + "\n" : "") + `${topKey}:\n` + yamlBlock(topKey) + "\n";
 }
 
-function applyYamlMcp(file) {
+const withGooseServer = text => withYamlServer(text, "extensions");
+const withHermesServer = text => withYamlServer(text, "mcp_servers");
+
+function applyYamlMcp(file, topKey) {
   const before = readText(file);
-  return writeIfChanged(file, before, withGooseServer(before));
+  return writeIfChanged(file, before, withYamlServer(before, topKey));
 }
 
 // ─── Kilo Code: rules are a list of files in the config's `instructions` key ───
@@ -506,6 +504,9 @@ function clineSettingsFiles() {
   return files.length ? files : [cli];
 }
 
+/** Hermes keeps everything under HERMES_HOME, which defaults to ~/.hermes. */
+const hermesHome = () => (process.env.HERMES_HOME && path.isAbsolute(process.env.HERMES_HOME.trim()) && process.env.HERMES_HOME.trim()) || path.join(HOME, ".hermes");
+
 /** Where a tool's MCP registration goes, for the setup listing. */
 function describeTarget(agent) {
   if (agent.unsupported) return "not supported (no MCP client)";
@@ -583,7 +584,7 @@ const AGENTS = [
     id: "goose",
     name: "Goose",
     detect: () => exists(path.join(HOME, ".config", "goose")) || which("goose"),
-    mcp: { kind: "yaml", file: path.join(HOME, ".config", "goose", "config.yaml") },
+    mcp: { kind: "yaml", topKey: "extensions", file: path.join(HOME, ".config", "goose", "config.yaml") },
     rules: { file: path.join(HOME, ".config", "goose", ".goosehints") },
   },
   {
@@ -594,6 +595,14 @@ const AGENTS = [
     mcp: { kind: "json", file: path.join(HOME, ".agents", "mcp.json"), key: "mcpServers", entry: { type: "stdio", command: COMMAND, args: [], env: {} } },
     // Its user-level instructions file is ~/.AGENTS.md (read before ~/.CLAUDE.md).
     rules: { file: path.join(HOME, ".AGENTS.md") },
+  },
+  {
+    id: "hermes",
+    name: "Hermes Agent",
+    detect: () => exists(hermesHome()) || which("hermes"),
+    mcp: { kind: "yaml", topKey: "mcp_servers", file: path.join(hermesHome(), "config.yaml") },
+    // SOUL.md is Hermes's global identity file, read at every start. The block goes first.
+    rules: { resolve: () => path.join(hermesHome(), "SOUL.md") },
   },
   {
     id: "aider",
@@ -627,7 +636,7 @@ function configureAgent(agent, { enableHooks = false } = {}) {
       results.push({ label: "MCP server", status: applyJsonMcp(file, m.key, m.entry), path: file });
     }
   } else if (m.kind === "yaml") {
-    results.push({ label: "MCP server", status: applyYamlMcp(m.file), path: m.file });
+    results.push({ label: "MCP server", status: applyYamlMcp(m.file, m.topKey), path: m.file });
   } else {
     // Codex keeps its hooks in the same managed block as the MCP entry.
     const withHooks = enableHooks && agent.hooks === "codex";
@@ -670,6 +679,8 @@ module.exports = {
   withCursorHooks,
   withGeminiHooks,
   withGooseServer,
+  withHermesServer,
+  hermesHome,
   withInstruction,
   describeTarget,
   kiloConfig,
