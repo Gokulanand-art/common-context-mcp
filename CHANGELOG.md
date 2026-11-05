@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.5.0
+
+- Setup now also configures **Hermes Agent** (Nous Research): the server goes in a managed block under `mcp_servers:` in `$HERMES_HOME/config.yaml` (default `~/.hermes`), and the protocol goes first in `$HERMES_HOME/SOUL.md`. The output was checked to load as YAML, and the protocol text passes Hermes's own prompt-injection scan for context files.
+- The Goose and Hermes YAML edits share one writer; both refuse an inline map and a same-named server they did not write.
+
 ## 3.4.0
 
 - **Google Drive sync.** New `common-context-mcp login` (Google OAuth2, loopback browser flow) grants read+write to the app's hidden Drive folder (`drive.appdata` scope, counts toward the user's 15 GB). The context JSON is stored there, so the same context is available on any machine after login.
