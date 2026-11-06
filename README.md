@@ -141,6 +141,7 @@ Text outside the managed block is never touched; reruns replace only that block.
 | `CONTEXT_MCP_PROJECT_DIR` | working directory | Project folder; its store is `common-context.json` inside |
 | `CONTEXT_MCP_FILE` | `<project>/common-context.json` | Store file, overriding the project folder |
 | `CONTEXT_MCP_AGENT_ID` | random per process | Stable agent identity (e.g. `claude-code-laptop`) |
+| `CONTEXT_MCP_SYNC_ID` | git origin, else folder hash | Drive sync identity: same project on every machine must resolve to the same id |
 | `CONTEXT_MCP_STALE_MINUTES` | `15` | Idle time before a session is marked dead |
 | `CONTEXT_MCP_CLAIM_MINUTES` | `30` | Claim lifetime without renewal |
 | `CONTEXT_MCP_MAX_OUTPUT_CHARS` | `40000` | Cap on any single tool response |
@@ -169,19 +170,23 @@ If a task involves long silent stretches, call `save_context` or `session_status
 
 ## ☁️ Google Drive sync (optional, cross-machine)
 
-Sign in with a Google account to store `common-context.json` in your Drive's hidden app folder, so the same context is available on every machine.
+Sign in with a Google account to sync each project's `common-context.json` with your Drive's hidden app folder, so the same context is available on every machine.
 
 ```bash
 common-context-mcp login      # opens Google consent in your browser
-common-context-mcp status     # shows login/token state
+common-context-mcp status     # shows login/token/sync state
 common-context-mcp sync       # force pull + push now
 common-context-mcp logout
 ```
 
 - Scope is `drive.appdata` only (a hidden app folder; counts toward your 15 GB, nothing lands in My Drive).
-- Local file stays primary and works offline. `load_context` pulls from Drive when the remote is newer; writes push back (debounced ~500 ms).
-- When logged in with no explicit `CONTEXT_MCP_FILE`/`CONTEXT_MCP_PROJECT_DIR`, the store defaults to `~/.config/common-context-mcp/common-context.json` (global, synced). Explicit env vars keep per-project mode.
-- Conflict strategy: last write wins by `modifiedTime`.
+- Local file stays primary and works offline. `load_context` pulls and merges remote changes; writes push back (debounced ~500 ms).
+- Each project gets its own remote file (`common-context--<project>.json`), so projects never overwrite each other. The identity is `CONTEXT_MCP_SYNC_ID` when set, else the git origin URL, else a hash of the folder. If you check out the same non-git project at different paths on different machines, set `CONTEXT_MCP_SYNC_ID` to the same value on all of them.
+- Sync state lives in `<store>.sync.json` next to the store (last remote version seen, last push hash). It is advisory: deleting it just causes one redundant sync.
+- Conflict strategy: union merge, nothing is deleted. Contexts resolve per key by latest `updated` (the losing value is kept in history); sessions union by id (a completed session is never resurrected by a stale copy; an id collision between different sessions keeps both); failures, broadcasts and patterns are unioned.
+- A push never clobbers a remote that changed since the last sync: the remote is merged first, then the union is uploaded.
+- An unreadable remote is backed up to `<store>.remote-backup-<timestamp>` and overwritten on the next push. A remote from a newer schema version is never overwritten — upgrade instead.
+- All machines must use the same Google OAuth client ID: the app folder is per-client, so different client IDs cannot see each other's files.
 - OAuth client credentials are read from `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` (or `AURA_*`) env vars, or `~/.aura/google-oauth.env` / `~/.config/common-context-mcp/oauth.env`.
 
 Two extra MCP tools: `sync_status` (read-only) and `sync_now`.

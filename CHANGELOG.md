@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.6.0
+
+- **Drive sync is now merge-based, per project.** Each project syncs to its own remote file (`common-context--<project>.json`) instead of all projects sharing one file that overwrote each other. The identity is `CONTEXT_MCP_SYNC_ID` when set, else the git origin URL (stable across machines), else a hash of the folder.
+- Sync merges instead of replacing: contexts resolve per key by latest `updated` (loser kept in history), sessions union by id (completed stays completed; id collisions keep both), failures/broadcasts/patterns union. A push merges a changed remote before uploading, so concurrent machines converge instead of losing entries.
+- Sync state moved to a `<store>.sync.json` sidecar (last remote version, last push hash): no-change pulls and pushes are skipped, and staleness no longer depends on comparing clocks across machines.
+- Removed the 3.4.0 global-store switch: per-project stores sync correctly now, so login no longer relocates the store. Local files stay untouched; each project's next push creates its new remote file (the old shared `common-context.json` remote is left orphaned on Drive).
+- `common-context-mcp sync` now pulls then pushes, as documented. `--help` lists the `login`/`logout`/`sync`/`status` subcommands. `sync_status` also shows the project's remote file and last pull/push times.
+- Sync tests run against an in-memory Drive stub with an isolated HOME; they no longer touch the real `~/.config`.
+
 ## 3.5.0
 
 - Setup now also configures **Hermes Agent** (Nous Research): the server goes in a managed block under `mcp_servers:` in `$HERMES_HOME/config.yaml` (default `~/.hermes`), and the protocol goes first in `$HERMES_HOME/SOUL.md`. The output was checked to load as YAML, and the protocol text passes Hermes's own prompt-injection scan for context files.

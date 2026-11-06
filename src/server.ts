@@ -172,7 +172,7 @@ export function createServer(initial: Config = loadConfig()): McpServer {
     },
     async ({ detail }) => {
       const mode: Detail = detail === "full" ? "full" : "brief";
-      try { await pullIfNewer(config.file); } catch (e) { log.warn(`pull failed: ${(e as Error).message}`); }
+      try { await pullIfNewer(store); } catch (e) { log.warn(`pull failed: ${(e as Error).message}`); }
       // Re-read only while this process's session is still open. After save_summary the session is
       // completed, so loading starts the next session instead of silently reusing a closed one.
       if (state.loaded && state.sessionId && !state.completed) {
@@ -641,10 +641,10 @@ export function createServer(initial: Config = loadConfig()): McpServer {
   // ─── sync_status ─────────────────────────────────────────
   register(
     "sync_status",
-    "Show Google Drive sync status (login, token, oauth config). Read-only.",
+    "Show Google Drive sync status (login, token, oauth config, this project's remote). Read-only.",
     {},
     () => {
-      return ok(`Logged in: ${isLoggedIn() ? "yes" : "no"}\n${syncStatus()}`);
+      return ok(`Logged in: ${isLoggedIn() ? "yes" : "no"}\n${syncStatus(config.file)}`);
     },
     { readOnly: true, requiresLoad: false }
   );
@@ -652,12 +652,11 @@ export function createServer(initial: Config = loadConfig()): McpServer {
   // ─── sync_now ─────────────────────────────────────────────
   register(
     "sync_now",
-    "Force a sync with Google Drive: pull if remote is newer, then push local. Requires login.",
+    "Force a sync with Google Drive: merge the project's remote changes in, then push local. Requires login.",
     {},
     async () => {
-      const g = await import("./google.js");
-      const pull = await g.pullIfNewer(config.file);
-      const push = await g.pushNow(config.file);
+      const pull = await pullIfNewer(store);
+      const push = await pushNow(store);
       return ok(`pull: ${pull.pulled ? "yes" : "no"} (${pull.reason})\npush: ${push.pushed ? "yes" : "no"} (${push.reason})`);
     },
     { requiresLoad: false }

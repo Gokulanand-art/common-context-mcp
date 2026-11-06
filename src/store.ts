@@ -136,6 +136,186 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+function timeMs(iso: string | undefined): number {
+  const t = Date.parse(iso ?? "");
+  return Number.isFinite(t) ? t : 0;
+}
+
+const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
+/** Canonical form: key order no longer matters, so fingerprints compare by content alone. */
+function canonical(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v && typeof v === "object") {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(v).sort()) out[k] = canonical((v as Record<string, unknown>)[k]);
+    return out;
+  }
+  return v;
+}
+
+/** Stable fingerprint of a store: equal content gives equal strings on every machine. */
+export function fingerprint(d: ContextData): string {
+  return JSON.stringify(canonical(d));
+}
+
+/**
+ * Picks the entry with the later timestamp. Ties break by smaller canonical form, so every
+ * machine deterministically picks the same winner and repeated merges converge.
+ */
+function laterWins<T>(a: T, ta: number, b: T, tb: number): [winner: T, loser: T] {
+  if (ta !== tb) return ta > tb ? [a, b] : [b, a];
+  return JSON.stringify(canonical(a)) <= JSON.stringify(canonical(b)) ? [a, b] : [b, a];
+}
+
+function unionBy<T>(items: T[], key: (t: T) => string): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const it of items) {
+    const k = key(it);
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(clone(it));
+    }
+  }
+  return out;
+}
+
+/** Completed and interrupted are terminal: a stale open copy must never resurrect them. */
+function statusRank(s: SessionEntry): number {
+  return s.status === "completed" ? 2 : s.status === "interrupted" ? 1 : 0;
+}
+
+/**
+ * Merges two stores (local + Drive remote) without losing entries. Neither input is mutated.
+ *
+ *   contexts   — union by key; on conflict the later `updated` wins and the loser's value is
+ *                kept in history, so no text is lost. Tags are unioned.
+ *   sessions   — union by id; the same session (same agent + timestamp) resolves to the more
+ *                terminal status, then the later heartbeat. An id collision between different
+ *                sessions (both machines created `session-1`) keeps both, renaming the remote one.
+ *   failures, broadcasts — union, deduped, oldest first.
+ *   claims     — union by area; on conflict the later expiry wins.
+ *   patterns   — union, local order first.
+ *
+ * Merge is idempotent and convergent: re-merging seen content changes nothing, so machines
+ * settle instead of ping-ponging pushes at each other. (Array order may differ by merge
+ * direction; content does not. Each side is stable under re-merge.)
+ */
+export function mergeData(local: ContextData, remote: unknown): ContextData {
+  const a = normalize(clone(local));
+  const b = normalize(clone(remote));
+
+  const contexts: Record<string, ContextEntry> = {};
+  for (const key of new Set([...Object.keys(a.contexts), ...Object.keys(b.contexts)])) {
+    const x = a.contexts[key];
+    const y = b.contexts[key];
+    if (!x) {
+      contexts[key] = clone(y);
+      continue;
+    }
+    if (!y) {
+      contexts[key] = clone(x);
+      continue;
+    }
+    const [win, lose] = laterWins(x, timeMs(x.updated), y, timeMs(y.updated));
+    const history = unionBy(
+      [...win.history, ...lose.history],
+      h => JSON.stringify([h.value, h.agent, h.updated])
+    );
+    if (lose.value !== win.value || lose.agent !== win.agent || lose.updated !== win.updated) {
+      const entry = { value: lose.value, agent: lose.agent, updated: lose.updated };
+      if (!history.some(h => h.value === entry.value && h.agent === entry.agent && h.updated === entry.updated)) {
+        history.push(entry);
+      }
+    }
+    contexts[key] = {
+      value: win.value,
+      tags: [...new Set([...x.tags, ...y.tags])],
+      agent: win.agent,
+      updated: win.updated,
+      history,
+    };
+  }
+
+  const sessionsById = new Map<string, SessionEntry>();
+  for (const s of a.sessions) sessionsById.set(s.id, clone(s));
+  const takeId = (id: string): string => {
+    if (!sessionsById.has(id)) return id;
+    const m = /^(.*)-(\d+)$/.exec(id);
+    const prefix = m ? m[1] : id;
+    let n = m ? Number(m[2]) + 1 : 2;
+    while (sessionsById.has(`${prefix}-${n}`)) n++;
+    return `${prefix}-${n}`;
+  };
+  for (const r of b.sessions) {
+    const cur = sessionsById.get(r.id);
+    if (!cur) {
+      sessionsById.set(r.id, clone(r));
+      continue;
+    }
+    if (cur.agent === r.agent && cur.timestamp === r.timestamp) {
+      const ra = statusRank(cur);
+      const rb = statusRank(r);
+      const winner = ra !== rb ? (ra > rb ? cur : r) : laterWins(cur, timeMs(cur.heartbeat), r, timeMs(r.heartbeat))[0];
+      const loser = winner === cur ? r : cur;
+      const mergedSession = clone(winner);
+      if (!mergedSession.checkpoint && loser.checkpoint) mergedSession.checkpoint = loser.checkpoint;
+      sessionsById.set(r.id, mergedSession);
+    } else {
+      const renamed = clone(r);
+      renamed.id = takeId(r.id);
+      sessionsById.set(renamed.id, renamed);
+    }
+  }
+
+  const byTime = (x: { timestamp: string }, y: { timestamp: string }) => timeMs(x.timestamp) - timeMs(y.timestamp);
+  const failures = unionBy(
+    [...a.failures, ...b.failures],
+    f => JSON.stringify([f.approach, f.why_failed, f.agent, f.timestamp])
+  ).sort(byTime);
+  const broadcasts = unionBy(
+    [...a.broadcasts, ...b.broadcasts],
+    m => JSON.stringify([m.message, m.agent, m.timestamp])
+  ).sort(byTime);
+
+  const claims: Record<string, ClaimEntry> = {};
+  for (const area of new Set([...Object.keys(a.claims), ...Object.keys(b.claims)])) {
+    const x = a.claims[area];
+    const y = b.claims[area];
+    if (!x) {
+      claims[area] = clone(y);
+      continue;
+    }
+    if (!y) {
+      claims[area] = clone(x);
+      continue;
+    }
+    claims[area] = clone(laterWins(x, timeMs(x.expires), y, timeMs(y.expires))[0]);
+  }
+
+  const ca = timeMs(a.created);
+  const cb = timeMs(b.created);
+  const created = ca > 0 && cb > 0 ? (ca <= cb ? a.created : b.created)
+    : ca > 0 ? a.created
+    : cb > 0 ? b.created
+    : new Date().toISOString();
+
+  return {
+    version: SCHEMA_VERSION,
+    created,
+    contexts,
+    sessions: [...sessionsById.values()],
+    failures,
+    claims,
+    broadcasts,
+    patterns: {
+      works: [...new Set([...a.patterns.works, ...b.patterns.works])],
+      fails: [...new Set([...a.patterns.fails, ...b.patterns.fails])],
+    },
+  };
+}
+
 /**
  * Shared JSON store with a cross-process lock.
  *
@@ -164,6 +344,25 @@ export class ContextStore {
   /** Runs `fn` under the lock and persists the result. */
   write<T>(fn: (d: ContextData) => T): T {
     return this.transact(fn, true);
+  }
+
+  /**
+   * Merges remotely-synced data into the store under the cross-process lock. Union by
+   * id/key: remote entries are added, conflicts resolve deterministically, local entries
+   * are never deleted. Returns true when the store changed. Throws StoreError when the
+   * remote data is unreadable or from a newer schema, leaving the store untouched.
+   */
+  mergeRemote(remote: unknown): boolean {
+    let changed = false;
+    this.write(d => {
+      const merged = mergeData(d, remote);
+      if (fingerprint(d) !== fingerprint(merged)) {
+        for (const k of Object.keys(d)) delete (d as unknown as Record<string, unknown>)[k];
+        Object.assign(d, merged);
+        changed = true;
+      }
+    });
+    return changed;
   }
 
   /** Byte size of the store file, or 0 if it does not exist yet. */
@@ -231,7 +430,7 @@ export class ContextStore {
     const tmp = `${this.cfg.file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
     fs.renameSync(tmp, this.cfg.file);
-    try { schedulePush(this.cfg.file); } catch {}
+    try { schedulePush(this); } catch {}
   }
 
   private acquire(token: string): void {
