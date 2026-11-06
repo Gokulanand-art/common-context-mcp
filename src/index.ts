@@ -5,7 +5,8 @@ import { createServer, VERSION } from "./server.js";
 import { loadConfig } from "./config.js";
 import { runDoctor, runTokenReport } from "./doctor.js";
 import { runHook } from "./hooks.js";
-import { login, clearTokens, syncStatus, isLoggedIn, flushPendingPush, pushNow } from "./google.js";
+import { ContextStore } from "./store.js";
+import { login, clearTokens, syncStatus, isLoggedIn, flushPendingPush, pullIfNewer, pushNow } from "./google.js";
 
 const HELP = `common-context-mcp ${VERSION}
 Shared, append-only context store for AI agents (MCP over stdio).
@@ -16,6 +17,10 @@ Usage:
   common-context-mcp doctor     Check the environment and store health
   common-context-mcp doctor --tokens   Estimated tokens the agents see
   common-context-mcp hook <ev>  Claude Code hook handler (reads event JSON on stdin)
+  common-context-mcp login      Sign in with Google for Drive sync (opens the browser)
+  common-context-mcp logout     Sign out (removes stored tokens)
+  common-context-mcp sync       Pull remote changes, then push (this project's store)
+  common-context-mcp status     Show login/token/sync state
   common-context-mcp --help     Print this help
   common-context-mcp-setup      Register the server with detected AI agents
 
@@ -23,6 +28,7 @@ Environment:
   CONTEXT_MCP_FILE              Store file (default: common-context.json in the project folder)
   CONTEXT_MCP_PROJECT_DIR       Project folder whose common-context.json is used (default: working directory)
   CONTEXT_MCP_AGENT_ID          Stable agent identity (default: random per process)
+  CONTEXT_MCP_SYNC_ID           Drive sync identity for this project (default: git origin, else folder hash)
   CONTEXT_MCP_STALE_MINUTES     Session considered dead after this many idle minutes (default 15)
   CONTEXT_MCP_CLAIM_MINUTES     Area claims expire after this many minutes (default 30)
   CONTEXT_MCP_MAX_OUTPUT_CHARS  Cap on any single tool response (default 40000)
@@ -40,11 +46,24 @@ if (arg === "logout") {
   process.exit(0);
 }
 if (arg === "sync") {
-  const cfg = loadConfig();
-  pushNow(cfg.file).then(r => { process.stdout.write(`push: ${r.pushed ? "yes" : "no"} (${r.reason})\n`); process.exit(0); }).catch(e => { console.error(e.message); process.exit(1); });
+  const store = new ContextStore(loadConfig());
+  pullIfNewer(store)
+    .then(pull =>
+      pushNow(store).then(push => {
+        process.stdout.write(
+          `pull: ${pull.pulled ? "yes" : "no"} (${pull.reason})\npush: ${push.pushed ? "yes" : "no"} (${push.reason})\n`
+        );
+        process.exit(0);
+      })
+    )
+    .catch(e => {
+      console.error(e.message);
+      process.exit(1);
+    });
 }
 if (arg === "status") {
-  process.stdout.write(`Logged in: ${isLoggedIn() ? "yes" : "no"}\n${syncStatus()}\n`);
+  const cfg = loadConfig();
+  process.stdout.write(`Logged in: ${isLoggedIn() ? "yes" : "no"}\n${syncStatus(cfg.file)}\n`);
   process.exit(0);
 }
 if (arg === "--version" || arg === "-v") {
