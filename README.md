@@ -239,7 +239,7 @@ npm run typecheck    # TypeScript strict check
 npm test             # build, then run the test suite
 ```
 
-CI runs on Node 18, 20, 22 (ubuntu + macOS). The suite covers cross-process locking with real concurrent processes, corruption and schema handling, the full MCP tool surface over stdio, and the installer against a temporary `HOME`.
+CI runs on Node 18, 20, 22, 24 (ubuntu + macOS). The suite covers cross-process locking with real concurrent processes, corruption and schema handling, the full MCP tool surface over stdio, and the installer against a temporary `HOME`.
 
 ---
 
