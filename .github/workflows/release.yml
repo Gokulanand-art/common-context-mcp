@@ -3,6 +3,8 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # Manual dispatch publishes the version on main (used to verify/probe OIDC).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -22,4 +24,5 @@ jobs:
       - run: npm test
       # Trusted publishing (OIDC) needs npm CLI >= 11.5.1; Node 22 ships npm 10
       - run: npm install -g npm@latest
-      - run: npm publish --provenance --access public
+      # Verbose on manual runs so a silent OIDC exchange failure shows its reason.
+      - run: npm publish --provenance --access public ${{ github.event_name == 'workflow_dispatch' && '--loglevel verbose' || '' }}
