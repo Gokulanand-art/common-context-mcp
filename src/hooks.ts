@@ -22,14 +22,16 @@ export { redact };
  *   claude-code, codex  – PreToolUse/PostToolUse/Stop style (same format)
  *   cursor              – conversation_id, permission deny, followup_message
  *   gemini, opencode    – decision deny/block, reason, hookSpecificOutput
+ *   muse                – same wire format as claude-code (verified against the
+ *                         binary's payloads), plus exit code 2 on deny/block
  *
  * Hooks never throw. An internal error is shown to the user and the event is
  * allowed through, so a broken hook cannot lock a session. CONTEXT_MCP_ENFORCE=0
  * turns enforcement off.
  */
 
-export type Source = "claude-code" | "codex" | "cursor" | "gemini" | "opencode";
-const SOURCES: Source[] = ["claude-code", "codex", "cursor", "gemini", "opencode"];
+export type Source = "claude-code" | "codex" | "cursor" | "gemini" | "opencode" | "muse";
+const SOURCES: Source[] = ["claude-code", "codex", "cursor", "gemini", "opencode", "muse"];
 
 const MCP_PREFIX = "mcp__common-context__";
 const STATE_DIR = path.join(os.homedir(), ".claude", "state", "common-context");
@@ -442,7 +444,8 @@ function render(source: Source, event: string, d: Decision): Record<string, unkn
   const hookEventName = CLAUDE_EVENT[event] ?? event;
   switch (source) {
     case "claude-code":
-    case "codex": {
+    case "codex":
+    case "muse": {
       const out: Record<string, unknown> = {};
       if (d.systemMessage) out.systemMessage = d.systemMessage;
       if (d.deny) {
@@ -507,6 +510,23 @@ export function sourceFrom(argv: string[], env: NodeJS.ProcessEnv = process.env)
   return SOURCES.includes(value as Source) ? (value as Source) : "claude-code";
 }
 
+/**
+ * Fills the fields handlers read from variant key names, so a source whose
+ * payload spells them slightly differently still works. Present values win,
+ * so sources that already match are unaffected.
+ */
+function normalizeInput(input: Input): Input {
+  const i = input as unknown as Record<string, unknown>;
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
+  return {
+    ...input,
+    tool_name: input.tool_name ?? str(i["toolName"]) ?? str(i["tool"]),
+    tool_input: input.tool_input ?? i["input"] ?? i["params"],
+    tool_response: input.tool_response ?? i["response"] ?? i["result"],
+    error: input.error ?? i["errorMessage"],
+  };
+}
+
 /** Entry point for `common-context-mcp hook <event> [--source <tool>]`. Reads the event JSON from stdin. */
 export function runHook(event: string | undefined, argv: string[] = process.argv): Promise<void> {
   return new Promise(resolve => {
@@ -518,17 +538,21 @@ export function runHook(event: string | undefined, argv: string[] = process.argv
       raw = "";
     }
     let out: Record<string, unknown>;
+    let terminal = false;
     try {
       const key = canonicalEvent(event);
       const handler = key ? HANDLERS[key] : undefined;
       if (!handler || !key) throw new Error(`unknown hook event "${event}"`);
-      const input = (raw.trim() ? JSON.parse(raw) : {}) as Input;
+      const input = normalizeInput((raw.trim() ? JSON.parse(raw) : {}) as Input);
       const decision = handler(input, ctxOf(input, source));
+      // Muse treats exit 2 as the deny/block signal (same JSON as Claude otherwise).
+      terminal = source === "muse" && (decision.deny != null || decision.block != null);
       out = render(source, key, decision);
     } catch (e) {
       // Fail open, but never silently: the user sees that enforcement was skipped.
       out = render(source, "", { systemMessage: `⚠️ common-context hook error (${event}): ${(e as Error).message}. Enforcement skipped for this event.` });
     }
+    if (terminal) process.exitCode = 2;
     process.stdout.write(JSON.stringify(out) + "\n", () => resolve());
   });
 }

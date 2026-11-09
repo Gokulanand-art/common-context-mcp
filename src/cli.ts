@@ -164,7 +164,8 @@ export function runCLI({ prog, bare, unknown, argv }: CLIOptions): void {
     return; // keep process alive
   }
   if (arg === "hook") {
-    runHook(argv[1]).then(() => process.exit(0));
+    // Honors the code the hook sets: 0 normally, 2 when Muse must treat the event as denied.
+    runHook(argv[1]).then(() => process.exit(process.exitCode ?? 0));
     return; // keep process alive
   }
 

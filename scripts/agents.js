@@ -406,6 +406,60 @@ function applyClaudeHooks() {
   return writeIfChanged(CLAUDE_SETTINGS, readText(CLAUDE_SETTINGS), JSON.stringify(after, null, 2) + "\n");
 }
 
+// ─── Muse enforcement hooks ─────────────────────────────────────
+// Same lifecycle events and wire format as Claude Code (the installed binary's
+// hook payloads match Claude's field for field), installed into the same
+// settings.json as the MCP server. Muse runs hooks with a cleared environment,
+// so the command uses absolute paths (node + server script) instead of PATH.
+
+const MUSE_SETTINGS = path.join(HOME, ".config", "muse", "settings.json");
+const MUSE_HOOKS = {
+  UserPromptSubmit: { command: "user-prompt-submit" },
+  PreToolUse: { command: "pre-tool-use", matcher: "*" },
+  PostToolUse: { command: "post-tool-use", matcher: "*" },
+  PostToolUseFailure: { command: "post-tool-use-failure", matcher: "*" },
+  Stop: { command: "stop" },
+};
+const MUSE_HOOK_MARK = "--source muse";
+const isMuseOurs = h => !!h && typeof h.command === "string" && h.command.includes(MUSE_HOOK_MARK);
+const withoutMuseOurs = groups => (Array.isArray(groups) ? groups : []).filter(g => !(g && Array.isArray(g.hooks) && g.hooks.some(isMuseOurs)));
+
+const shellQuote = s => (/[\s"]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s);
+const museHookCommand = cmd => `${shellQuote(process.execPath)} ${shellQuote(path.join(__dirname, "..", "dist", "index.js"))} hook ${cmd} --source muse`;
+
+/** Adds our hook groups. Other hooks are kept; reruns replace only ours. */
+function withMuseHooks(settings) {
+  const next = JSON.parse(JSON.stringify(settings));
+  next.hooks = next.hooks && typeof next.hooks === "object" ? next.hooks : {};
+  for (const [event, spec] of Object.entries(MUSE_HOOKS)) {
+    const groups = Array.isArray(next.hooks[event]) ? next.hooks[event] : [];
+    const group = { hooks: [{ type: "command", command: museHookCommand(spec.command), timeout: 10 }] };
+    if (spec.matcher) group.matcher = spec.matcher;
+    next.hooks[event] = [...withoutMuseOurs(groups), group];
+  }
+  return next;
+}
+
+/** Drops our hook entries; empty events (and an empty hooks object) go with them. */
+function withoutMuseHooks(settings) {
+  const next = JSON.parse(JSON.stringify(settings));
+  if (!next.hooks || typeof next.hooks !== "object") return next;
+  for (const event of Object.keys(MUSE_HOOKS)) {
+    if (!Array.isArray(next.hooks[event])) continue;
+    next.hooks[event] = withoutMuseOurs(next.hooks[event]);
+    if (next.hooks[event].length === 0) delete next.hooks[event];
+  }
+  if (Object.keys(next.hooks).length === 0) delete next.hooks;
+  return next;
+}
+
+function applyMuseUnhooks() {
+  const before = readJsonStrict(MUSE_SETTINGS);
+  const after = withoutMuseHooks(before);
+  if (JSON.stringify(before) === JSON.stringify(after)) return "unchanged";
+  return writeIfChanged(MUSE_SETTINGS, readText(MUSE_SETTINGS), JSON.stringify(after, null, 2) + "\n") === "updated" ? "removed" : "unchanged";
+}
+
 // ─── Hooks for Cursor, Gemini CLI and OpenCode ─────────────────────────
 
 const HOOK_MARK = `${COMMAND} hook `;
@@ -829,6 +883,7 @@ const AGENTS = [
     // `mode: "optional"` skips us with a warning instead of aborting the run when unavailable.
     mcp: { kind: "json", file: path.join(HOME, ".config", "muse", "settings.json"), key: "mcp_servers", entry: { transport: "stdio", command: COMMAND, args: [], mode: "optional" }, ensure: { schema_version: 1 } },
     rules: { kind: "skill" },
+    hooks: "muse",
   },
   {
     id: "qwen",
@@ -880,6 +935,7 @@ const HOOK_INSTALLERS = {
   cursor: () => ({ label: "enforcement hooks", status: applyJsonHooks(CURSOR_HOOKS, withCursorHooks), path: CURSOR_HOOKS }),
   gemini: () => ({ label: "enforcement hooks", status: applyJsonHooks(path.join(HOME, ".gemini", "settings.json"), withGeminiHooks), path: path.join(HOME, ".gemini", "settings.json") }),
   opencode: () => ({ label: "enforcement plugin", status: applyOpenCodePlugin(), path: OPENCODE_PLUGIN }),
+  muse: () => ({ label: "enforcement hooks", status: applyJsonHooks(MUSE_SETTINGS, withMuseHooks), path: MUSE_SETTINGS }),
 };
 
 /**
@@ -930,6 +986,7 @@ const HOOK_UNINSTALLERS = {
     return { label: "enforcement hooks", status: applyJsonUnhooks(file, GEMINI_EVENTS), path: file };
   },
   opencode: () => ({ label: "enforcement plugin", status: removeOpenCodePlugin(), path: OPENCODE_PLUGIN }),
+  muse: () => ({ label: "enforcement hooks", status: applyMuseUnhooks(), path: MUSE_SETTINGS }),
 };
 
 /**
@@ -1017,4 +1074,6 @@ module.exports = {
   museSkillFile,
   applyMuseSkill,
   removeMuseSkill,
+  withMuseHooks,
+  withoutMuseHooks,
 };

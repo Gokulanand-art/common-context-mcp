@@ -125,14 +125,14 @@ The server sends these instructions to every connected agent. Follow them in ord
 | Goose | `~/.config/goose/config.yaml` (managed block under `extensions:`) | `~/.config/goose/.goosehints` | Rules only |
 | Freebuff | `~/.agents/mcp.json` | `~/.AGENTS.md` | Rules only |
 | Hermes Agent | `$HERMES_HOME/config.yaml` (default `~/.hermes`), managed block under `mcp_servers:` | `$HERMES_HOME/SOUL.md` | Rules only |
-| Muse | `~/.config/muse/settings.json` (under `mcp_servers:`) | `~/.agents/skills/common-context/SKILL.md` (global skill) | Rules only |
+| Muse | `~/.config/muse/settings.json` (under `mcp_servers:`) | `~/.agents/skills/common-context/SKILL.md` (global skill) | Skill + hooks |
 | Qwen Code | `~/.qwen/settings.json` | `~/.qwen/QWEN.md` | Rules only |
 | Zed | `~/.config/zed/settings.json` (under `context_servers:`) | Manual paste into the project's `.rules` directory | Rules only |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` | `~/.codeium/windsurf/memories/global_rules.md` | Rules only |
 | Kiro | `~/.kiro/settings/mcp.json` | `~/.kiro/steering/common-context.md` | Rules only |
 | Aider | Not configured: Aider has no MCP client | none | none |
 
-Kilo Code, Cline, Goose, Freebuff, Hermes Agent, Muse, Qwen Code, Zed, Windsurf and Kiro do not have hooks yet, so for them the protocol is advice the model follows, not a gate. A `kilo.jsonc` with comments is refused rather than rewritten: add the server by hand in that case. Freebuff shares Codebuff's MCP loader; its paths come from the Codebuff source and were not run against a live Freebuff session.
+Kilo Code, Cline, Goose, Freebuff, Hermes Agent, Qwen Code, Zed, Windsurf and Kiro do not have hooks yet, so for them the protocol is advice the model follows, not a gate. A `kilo.jsonc` with comments is refused rather than rewritten: add the server by hand in that case. Freebuff shares Codebuff's MCP loader; its paths come from the Codebuff source and were not run against a live Freebuff session.
 
 Text outside the managed block is never touched; reruns replace only that block.
 

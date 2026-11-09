@@ -1,5 +1,10 @@
 # Changelog
 
+## 3.10.0
+
+- **Muse now enforces like Claude**: setup installs lifecycle hooks (`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `Stop`) into `~/.config/muse/settings.json`, so Muse loads context first, checkpoints work, and summarizes before answering — instead of merely having the tools nearby. Verified against the installed binary: hook payloads match Claude's field for field, `muse exec` runs fire the hooks, and the deny/block shapes match the binary's own validation plus exit code 2. Hook commands use absolute node/script paths because Muse clears the hook environment.
+- New `muse` hook source (`--source muse`); hook input also accepts variant payload keys (`tool`/`input`/`params`/`response`/`result`) as a fallback.
+
 ## 3.9.1
 
 - Muse setup is now fully automatic: the protocol installs as a global skill (`~/.agents/skills/common-context/SKILL.md`, activation on) instead of a manual paste step. Verified against the installed `muse` binary (`skills validate` + user-scope listing). The skill file is owned: never overwritten when foreign, removed on uninstall only when ours.

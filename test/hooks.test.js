@@ -240,3 +240,46 @@ test("week-old hook state files are swept on write", () => {
   assert.ok(fs.existsSync(path.join(stateDir, `${SID}.json`)), "current state kept");
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("muse source: deny and block exit 2 with Claude-shaped JSON, allow exits 0", () => {
+  const { dir, file } = tempStore();
+  const env = { ...process.env, HOME: dir, CONTEXT_MCP_FILE: file };
+  delete env.CONTEXT_MCP_ENFORCE;
+  const hook = (event, input = {}) => {
+    const r = spawnSync(process.execPath, [BIN, "hook", event, "--source", "muse"], {
+      input: JSON.stringify({ session_id: SID, hook_event_name: event, ...input }),
+      env,
+      encoding: "utf-8",
+    });
+    return { status: r.status, out: JSON.parse(r.stdout) };
+  };
+  hook("UserPromptSubmit", { prompt: "fix the build" });
+  const denied = hook("PreToolUse", { tool_name: "Bash", tool_input: {} });
+  assert.equal(denied.status, 2, "deny exits 2 for Muse");
+  assert.equal(denied.out.hookSpecificOutput.permissionDecision, "deny");
+  assert.match(denied.out.hookSpecificOutput.permissionDecisionReason, /load_context/);
+
+  hook("PostToolUse", { tool_name: M + "load_context", tool_input: {}, tool_response: { text: "Your session: session-9 (agent x)" } });
+  const allowed = hook("PreToolUse", { tool_name: "Bash", tool_input: {} });
+  assert.equal(allowed.status, 0, "allow exits 0");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("muse source: variant payload keys still gate correctly", () => {
+  const { dir, file } = tempStore();
+  const env = { ...process.env, HOME: dir, CONTEXT_MCP_FILE: file };
+  delete env.CONTEXT_MCP_ENFORCE;
+  const hook = (event, input = {}) => {
+    const r = spawnSync(process.execPath, [BIN, "hook", event, "--source", "muse"], {
+      input: JSON.stringify({ session_id: SID, hook_event_name: event, ...input }),
+      env,
+      encoding: "utf-8",
+    });
+    return { status: r.status, out: JSON.parse(r.stdout) };
+  };
+  hook("UserPromptSubmit", { prompt: "hi" });
+  const denied = hook("PreToolUse", { tool: "Bash", input: {} });
+  assert.equal(denied.status, 2, "tool/input aliases gate like tool_name/tool_input");
+  assert.equal(denied.out.hookSpecificOutput.permissionDecision, "deny");
+  fs.rmSync(dir, { recursive: true, force: true });
+});

@@ -59,7 +59,7 @@ test("registry covers exactly the sixteen listed tools, and Aider is the one tha
   assert.equal(agents.AGENTS.find(a => a.id === "cursor").rules, null, "Cursor rules are a manual step");
   assert.equal(agents.AGENTS.find(a => a.id === "muse").rules.kind, "skill", "Muse gets a global skill, not a rules file");
   assert.equal(agents.AGENTS.find(a => a.id === "zed").rules, null, "Zed rules are per-project");
-  assert.deepEqual(agents.AGENTS.filter(a => a.hooks).map(a => a.id).sort(), ["claude-code", "codex", "cursor", "gemini", "opencode"], "all five tools get enforcement");
+  assert.deepEqual(agents.AGENTS.filter(a => a.hooks).map(a => a.id).sort(), ["claude-code", "codex", "cursor", "gemini", "muse", "opencode"], "all six tools get enforcement");
 });
 
 test("end to end over a fake home: every detected tool gets its MCP entry and protocol rules", () => {
@@ -402,6 +402,53 @@ test("end to end over a fake home: Muse, Qwen, Zed, Windsurf and Kiro are config
   assert.match(museSection, /protocol skill/);
   assert.match(r.stderr, /Zed\n.*manual step/s);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("end to end over a fake home: Muse settings carry MCP, schema and hooks together", () => {
+  const { dir } = tempStore();
+  fs.mkdirSync(path.join(dir, ".config/muse"), { recursive: true });
+  // Hooks enabled (no CONTEXT_MCP_NO_HOOKS), PATH empty so only Muse is detected.
+  const env = { ...process.env, HOME: dir, PATH: "/nonexistent", npm_lifecycle_event: "" };
+  const install = spawnSync(process.execPath, [SETUP, "--yes"], { env, encoding: "utf-8" });
+  assert.equal(install.status, 0, install.stderr);
+  const settings = JSON.parse(fs.readFileSync(path.join(dir, ".config/muse/settings.json"), "utf-8"));
+  assert.ok(settings.mcp_servers["common-context"], "MCP registered");
+  assert.equal(settings.schema_version, 1);
+  assert.deepEqual(Object.keys(settings.hooks).sort(), ["PostToolUse", "PostToolUseFailure", "PreToolUse", "Stop", "UserPromptSubmit"]);
+  assert.match(settings.hooks.PreToolUse[0].hooks[0].command, /--source muse/);
+  assert.match(install.stderr, /enforcement hooks \(updated\)/);
+  const uninstall = spawnSync(process.execPath, [SETUP, "--yes", "--uninstall"], { env, encoding: "utf-8" });
+  assert.equal(uninstall.status, 0, uninstall.stderr);
+  const cleaned = JSON.parse(fs.readFileSync(path.join(dir, ".config/muse/settings.json"), "utf-8"));
+  assert.equal(cleaned.hooks, undefined, "hooks block gone");
+  assert.deepEqual(cleaned.mcp_servers, {}, "server entry gone");
+  assert.equal(cleaned.schema_version, 1, "tool-owned keys stay");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Muse hooks: merge into settings.json beside MCP, keep user hooks, uninstall removes only ours", () => {
+  const user = {
+    schema_version: 1,
+    mcp_servers: { "common-context": { transport: "stdio", command: "common-context-mcp" } },
+    hooks: { Stop: [{ hooks: [{ type: "command", command: "./my-stop.sh", timeout: 5 }] }] },
+  };
+  const once = agents.withMuseHooks(user);
+  assert.deepEqual(once.mcp_servers, user.mcp_servers, "MCP registration untouched");
+  assert.equal(once.schema_version, 1);
+  assert.equal(once.hooks.Stop.length, 2, "user hook kept beside ours");
+  assert.ok(once.hooks.Stop.some(g => g.hooks[0].command === "./my-stop.sh"));
+  const pre = once.hooks.PreToolUse[0];
+  assert.equal(pre.matcher, "*");
+  assert.match(pre.hooks[0].command, /hook pre-tool-use --source muse$/);
+  assert.match(pre.hooks[0].command, new RegExp(`^${process.execPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`), "absolute node, no PATH needed");
+  assert.equal(pre.hooks[0].timeout, 10);
+  assert.deepEqual(agents.withMuseHooks(once), once, "idempotent");
+  const removed = agents.withoutMuseHooks(once);
+  assert.equal(removed.hooks.Stop.length, 1, "only ours removed");
+  assert.equal(removed.hooks.Stop[0].hooks[0].command, "./my-stop.sh");
+  assert.equal(removed.hooks.PreToolUse, undefined, "emptied events pruned");
+  assert.deepEqual(removed.mcp_servers, user.mcp_servers, "MCP survives uninstall");
+  assert.equal(agents.withoutMuseHooks({ hooks: {} }).hooks, undefined);
 });
 
 test("Muse skill: owned file lifecycle under a fake HOME", () => {
