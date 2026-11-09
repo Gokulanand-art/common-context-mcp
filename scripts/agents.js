@@ -12,8 +12,10 @@
  * Locations were checked against the tools' documentation and, for Codex, against
  * the installed binary (see README). Cursor's global User Rules can only be set in
  * its settings UI, so Cursor gets a manual step instead of a file write. Freebuff,
- * Kilo Code, Cline and Goose were checked against their docs and source; Aider has
- * no MCP client, so it is listed but never written.
+ * Kilo Code, Cline and Goose were checked against their docs and source; Muse,
+ * Qwen Code, Zed, Windsurf and Kiro were checked against their docs too. Muse and
+ * Zed document no global rules file, so they get a manual step like Cursor. Aider
+ * has no MCP client, so it is listed but never written.
  */
 const fs = require("fs");
 const path = require("path");
@@ -522,6 +524,12 @@ function clineSettingsFiles() {
 /** Hermes keeps everything under HERMES_HOME, which defaults to ~/.hermes. */
 const hermesHome = () => (process.env.HERMES_HOME && path.isAbsolute(process.env.HERMES_HOME.trim()) && process.env.HERMES_HOME.trim()) || path.join(HOME, ".hermes");
 
+/** Zed keeps settings.json under ~/.config/zed on macOS/Linux and %APPDATA%\Zed on Windows. */
+function zedSettingsFile() {
+  if (process.platform === "win32") return path.join(process.env.APPDATA || path.join(HOME, "AppData", "Roaming"), "Zed", "settings.json");
+  return path.join(HOME, ".config", "zed", "settings.json");
+}
+
 /** Where a tool's MCP registration goes, for the setup listing. */
 function describeTarget(agent) {
   if (agent.unsupported) return "not supported (no MCP client)";
@@ -767,6 +775,46 @@ const AGENTS = [
     mcp: { kind: "yaml", topKey: "mcp_servers", file: path.join(hermesHome(), "config.yaml") },
     // SOUL.md is Hermes's global identity file, read at every start. The block goes first.
     rules: { resolve: () => path.join(hermesHome(), "SOUL.md") },
+  },
+  {
+    id: "muse",
+    name: "Muse",
+    detect: () => exists(path.join(HOME, ".config", "muse")) || which("muse"),
+    // The key is snake_case `mcp_servers`; camelCase `mcpServers` is ignored.
+    mcp: { kind: "json", file: path.join(HOME, ".config", "muse", "settings.json"), key: "mcp_servers", entry: { command: COMMAND } },
+    rules: null,
+    manual: `Muse Code documents no global rules file. In each project run \`muse init\`, then paste the contents of ${PROTOCOL_FILE} into its AGENTS.md`,
+  },
+  {
+    id: "qwen",
+    name: "Qwen Code",
+    detect: () => exists(path.join(HOME, ".qwen")) || which("qwen"),
+    mcp: { kind: "json", file: path.join(HOME, ".qwen", "settings.json"), key: "mcpServers", entry: { command: COMMAND } },
+    rules: { file: path.join(HOME, ".qwen", "QWEN.md") },
+  },
+  {
+    id: "zed",
+    name: "Zed",
+    detect: () => exists(path.dirname(zedSettingsFile())) || which("zed"),
+    // Zed names the section `context_servers`; each entry is a stdio command.
+    mcp: { kind: "json", file: zedSettingsFile(), key: "context_servers", entry: { command: COMMAND } },
+    rules: null,
+    manual: `Zed reads rules from each project's .rules directory. Create a .rules/common-context.md file in the project and paste the contents of ${PROTOCOL_FILE}`,
+  },
+  {
+    id: "windsurf",
+    name: "Windsurf",
+    detect: () => exists(path.join(HOME, ".codeium")) || which("windsurf"),
+    mcp: { kind: "json", file: path.join(HOME, ".codeium", "windsurf", "mcp_config.json"), key: "mcpServers", entry: { command: COMMAND } },
+    rules: { file: path.join(HOME, ".codeium", "windsurf", "memories", "global_rules.md") },
+  },
+  {
+    id: "kiro",
+    name: "Kiro",
+    detect: () => exists(path.join(HOME, ".kiro")) || which("kiro"),
+    mcp: { kind: "json", file: path.join(HOME, ".kiro", "settings", "mcp.json"), key: "mcpServers", entry: { command: COMMAND } },
+    // Kiro reads every Markdown file under ~/.kiro/steering as persistent instructions.
+    rules: { file: path.join(HOME, ".kiro", "steering", "common-context.md") },
   },
   {
     id: "aider",

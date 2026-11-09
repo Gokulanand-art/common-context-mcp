@@ -8,7 +8,7 @@
 
 Agents checkpoint their work, record failures, claim files, hand off tasks, and recover after crashes — so the next agent starts exactly where the last one stopped.
 
-**common context MCP** (also published as [`common-context-mcp`](https://www.npmjs.com/package/common-context-mcp)) gives every agent on your machine one shared memory file — one common context that Claude Code, Codex, Cursor, Gemini, OpenCode, Kilo Code, Cline, Goose, Freebuff and Hermes Agent all read and write.
+**common context MCP** (also published as [`common-context-mcp`](https://www.npmjs.com/package/common-context-mcp)) gives every agent on your machine one shared memory file — one common context that Claude Code, Codex, Cursor, Gemini, OpenCode, Kilo Code, Cline, Goose, Freebuff, Hermes Agent, Muse, Qwen Code, Zed, Windsurf and Kiro all read and write.
 
 📦 **npm:** [`npm install -g common-context-mcp`](https://www.npmjs.com/package/common-context-mcp) · 💻 **GitHub:** [Gokulanand-art/common-context-mcp](https://github.com/Gokulanand-art/common-context-mcp)
 
@@ -46,7 +46,7 @@ npm install -g common-context-mcp
 common-context-mcp-setup
 ```
 
-The setup step detects your AI tools (Claude Code, Codex, Cursor, Gemini, OpenCode, Kilo Code, Cline, Goose, Freebuff, Hermes Agent) and wires up the MCP server + protocol block for each one you pick. To remove everything again later: `common-context-mcp-setup --uninstall` (backups are kept).
+The setup step detects your AI tools (Claude Code, Codex, Cursor, Gemini, OpenCode, Kilo Code, Cline, Goose, Freebuff, Hermes Agent, Muse, Qwen Code, Zed, Windsurf, Kiro) and wires up the MCP server + protocol block for each one you pick. To remove everything again later: `common-context-mcp-setup --uninstall` (backups are kept).
 
 ### 2. Use it in any project
 
@@ -122,9 +122,14 @@ The server sends these instructions to every connected agent. Follow them in ord
 | Goose | `~/.config/goose/config.yaml` (managed block under `extensions:`) | `~/.config/goose/.goosehints` | Rules only |
 | Freebuff | `~/.agents/mcp.json` | `~/.AGENTS.md` | Rules only |
 | Hermes Agent | `$HERMES_HOME/config.yaml` (default `~/.hermes`), managed block under `mcp_servers:` | `$HERMES_HOME/SOUL.md` | Rules only |
+| Muse | `~/.config/muse/settings.json` (under `mcp_servers:`) | Manual paste into the project's `AGENTS.md` | Rules only |
+| Qwen Code | `~/.qwen/settings.json` | `~/.qwen/QWEN.md` | Rules only |
+| Zed | `~/.config/zed/settings.json` (under `context_servers:`) | Manual paste into the project's `.rules` directory | Rules only |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `~/.codeium/windsurf/memories/global_rules.md` | Rules only |
+| Kiro | `~/.kiro/settings/mcp.json` | `~/.kiro/steering/common-context.md` | Rules only |
 | Aider | Not configured: Aider has no MCP client | none | none |
 
-Kilo Code, Cline, Goose, Freebuff and Hermes Agent do not have hooks yet, so for them the protocol is advice the model follows, not a gate. A `kilo.jsonc` with comments is refused rather than rewritten: add the server by hand in that case. Freebuff shares Codebuff's MCP loader; its paths come from the Codebuff source and were not run against a live Freebuff session.
+Kilo Code, Cline, Goose, Freebuff, Hermes Agent, Muse, Qwen Code, Zed, Windsurf and Kiro do not have hooks yet, so for them the protocol is advice the model follows, not a gate. A `kilo.jsonc` with comments is refused rather than rewritten: add the server by hand in that case. Freebuff shares Codebuff's MCP loader; its paths come from the Codebuff source and were not run against a live Freebuff session.
 
 Text outside the managed block is never touched; reruns replace only that block.
 

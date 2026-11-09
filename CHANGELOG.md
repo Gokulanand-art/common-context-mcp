@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.7.0
+
+- Setup now configures five more tools: **Muse** (`~/.config/muse/settings.json`, snake_case `mcp_servers` key), **Qwen Code** (`~/.qwen/settings.json` + `~/.qwen/QWEN.md`), **Zed** (`~/.config/zed/settings.json`, `context_servers` key), **Windsurf** (`~/.codeium/windsurf/mcp_config.json` + global rules), and **Kiro** (`~/.kiro/settings/mcp.json` + `~/.kiro/steering/common-context.md`). Locations were checked against each tool's docs.
+- Muse and Zed document no global rules file, so they get a manual paste step (like Cursor) instead of a guessed path.
+- Roo Code was deliberately left out: it is discontinued (migrating to Kilo Code, which is already supported).
+
 ## 3.6.4
 
 - Fix a release-blocking test: the doctor sync test asserted exit 0, which fails where the binary is not on PATH (CI runners). Test-only change since 3.6.3.

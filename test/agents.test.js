@@ -52,11 +52,13 @@ test("JSON MCP merge: replaces the legacy command and leaves a custom entry alon
   assert.equal(custom.mcpServers["common-context"].command, "/my/path");
 });
 
-test("registry covers exactly the eleven listed tools, and Aider is the one that cannot be configured", () => {
-  assert.deepEqual(agents.AGENTS.map(a => a.id).sort(), ["aider", "claude-code", "cline", "codex", "cursor", "freebuff", "gemini", "goose", "hermes", "kilo", "opencode"]);
+test("registry covers exactly the sixteen listed tools, and Aider is the one that cannot be configured", () => {
+  assert.deepEqual(agents.AGENTS.map(a => a.id).sort(), ["aider", "claude-code", "cline", "codex", "cursor", "freebuff", "gemini", "goose", "hermes", "kilo", "kiro", "muse", "opencode", "qwen", "windsurf", "zed"]);
   assert.ok(agents.AGENTS.find(a => a.id === "aider").unsupported, "Aider has no MCP client");
   assert.deepEqual(agents.AGENTS.filter(a => a.unsupported).map(a => a.id), ["aider"]);
   assert.equal(agents.AGENTS.find(a => a.id === "cursor").rules, null, "Cursor rules are a manual step");
+  assert.equal(agents.AGENTS.find(a => a.id === "muse").rules, null, "Muse has no documented global rules file");
+  assert.equal(agents.AGENTS.find(a => a.id === "zed").rules, null, "Zed rules are per-project");
   assert.deepEqual(agents.AGENTS.filter(a => a.hooks).map(a => a.id).sort(), ["claude-code", "codex", "cursor", "gemini", "opencode"], "all five tools get enforcement");
 });
 
@@ -94,7 +96,7 @@ test("no tool detected: nothing is written and supported tools are listed", () =
     encoding: "utf-8",
   });
   assert.equal(r.status, 0);
-  assert.match(r.stderr, /Supported tools: Claude Code, Cursor, Codex CLI, Gemini CLI, OpenCode, Kilo Code, Cline, Goose, Freebuff, Hermes Agent, Aider/);
+  assert.match(r.stderr, /Supported tools: Claude Code, Cursor, Codex CLI, Gemini CLI, OpenCode, Kilo Code, Cline, Goose, Freebuff, Hermes Agent, Muse, Qwen Code, Zed, Windsurf, Kiro, Aider/);
   assert.equal(fs.existsSync(path.join(dir, ".codex")), false);
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -364,6 +366,37 @@ test("end to end over a fake home: Hermes gets its server in config.yaml and the
   assert.match(soul, /You are Hermes\.\n$/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+test("end to end over a fake home: Muse, Qwen, Zed, Windsurf and Kiro are configured", () => {
+  const { dir } = tempStore();
+  for (const d of [".config/muse", ".qwen", ".config/zed", ".codeium", ".kiro"]) {
+    fs.mkdirSync(path.join(dir, d), { recursive: true });
+  }
+  fs.writeFileSync(path.join(dir, ".qwen/QWEN.md"), "# My memory\n");
+  const env = { ...process.env, HOME: dir, PATH: "/nonexistent", npm_lifecycle_event: "", CONTEXT_MCP_NO_HOOKS: "1" };
+  const r = spawnSync(process.execPath, [SETUP, "--yes"], { env, encoding: "utf-8" });
+  assert.equal(r.status, 0, r.stderr);
+
+  const muse = JSON.parse(fs.readFileSync(path.join(dir, ".config/muse/settings.json"), "utf-8"));
+  assert.equal(muse.mcp_servers["common-context"].command, "common-context-mcp");
+  assert.equal(muse.mcpServers, undefined, "camelCase key is ignored by Muse, so it is never written");
+  const qwen = JSON.parse(fs.readFileSync(path.join(dir, ".qwen/settings.json"), "utf-8"));
+  assert.equal(qwen.mcpServers["common-context"].command, "common-context-mcp");
+  const qwenMd = fs.readFileSync(path.join(dir, ".qwen/QWEN.md"), "utf-8");
+  assert.match(qwenMd, /^<!-- common-context:start -->/);
+  assert.match(qwenMd, /# My memory/, "existing memory kept after the block");
+  const zed = JSON.parse(fs.readFileSync(path.join(dir, ".config/zed/settings.json"), "utf-8"));
+  assert.equal(zed.context_servers["common-context"].command, "common-context-mcp");
+  const windsurf = JSON.parse(fs.readFileSync(path.join(dir, ".codeium/windsurf/mcp_config.json"), "utf-8"));
+  assert.equal(windsurf.mcpServers["common-context"].command, "common-context-mcp");
+  assert.match(fs.readFileSync(path.join(dir, ".codeium/windsurf/memories/global_rules.md"), "utf-8"), /common-context:start/);
+  const kiro = JSON.parse(fs.readFileSync(path.join(dir, ".kiro/settings/mcp.json"), "utf-8"));
+  assert.equal(kiro.mcpServers["common-context"].command, "common-context-mcp");
+  assert.match(fs.readFileSync(path.join(dir, ".kiro/steering/common-context.md"), "utf-8"), /common-context:start/);
+  assert.match(r.stderr, /Muse\n.*manual step/s);
+  assert.match(r.stderr, /Zed\n.*manual step/s);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("uninstall: JSON entries we wrote are removed, custom ones are kept", () => {
   const ours = { mcpServers: { "common-context": { command: "common-context-mcp" }, other: { command: "x" } } };
   const r1 = agents.removeJsonServer(ours, "mcpServers");
