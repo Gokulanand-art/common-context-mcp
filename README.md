@@ -48,6 +48,8 @@ ccm
 
 `ccm` is the one command: it opens the Google login page first (required — the cloud stores your context), then back in the terminal it sets up every AI tool it finds (Claude Code, Codex, Cursor, Gemini, OpenCode, Kilo Code, Cline, Goose, Freebuff, Hermes Agent, Muse, Qwen Code, Zed, Windsurf, Kiro) and finishes. To remove everything again later: `common-context-mcp-setup --uninstall` (backups are kept).
 
+> Note: `ccm` is also the name of Cassandra Cluster Manager. If you have that installed, whichever `ccm` comes first on your PATH wins — run `which ccm` to check, and use the full `common-context-mcp` command (same options, except bare invocation starts the server) if they collide.
+
 ### 2. Use it in any project
 
 Your agents talk to the store through MCP tools (the protocol below keeps them honest). You only need the CLI for health and sync:
@@ -182,6 +184,8 @@ ccm logout     # revokes the token with Google, removes local tokens
 ```
 
 `login` needs a Google OAuth client: set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, or put them in `~/.config/common-context-mcp/oauth.env`. `logout` revokes the token server-side when reachable, and always clears the local token file — even offline.
+
+**Creating the OAuth client (one time, about 2 minutes):** open `console.cloud.google.com/apis/credentials` → Create Credentials → OAuth client ID → Application type: **Desktop app** → copy the Client ID and Client secret into `~/.config/common-context-mcp/oauth.env` as above, then run `ccm` again. No redirect URIs to configure (Desktop apps may use the local loopback). To skip login entirely and stay local-only: `ccm --local`.
 
 - Scope is `drive.appdata` only (a hidden app folder; counts toward your 15 GB, nothing lands in My Drive).
 - Login is part of first setup (`ccm` asks for it before anything else), because the cloud stores your context. After that everything also works offline from the local copy: while logged in, every write uploads in the background (within about half a second), and `load_context` pulls and merges remote changes so work continues from the cloud copy. Right after `login`, the current local file is stored to the cloud at once.

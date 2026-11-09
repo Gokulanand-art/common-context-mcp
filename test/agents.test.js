@@ -377,7 +377,8 @@ test("end to end over a fake home: Muse, Qwen, Zed, Windsurf and Kiro are config
   assert.equal(r.status, 0, r.stderr);
 
   const muse = JSON.parse(fs.readFileSync(path.join(dir, ".config/muse/settings.json"), "utf-8"));
-  assert.equal(muse.mcp_servers["common-context"].command, "common-context-mcp");
+  assert.deepEqual(muse.mcp_servers["common-context"], { transport: "stdio", command: "common-context-mcp", args: [], mode: "optional" });
+  assert.equal(muse.schema_version, 1, "Muse requires schema_version in the file");
   assert.equal(muse.mcpServers, undefined, "camelCase key is ignored by Muse, so it is never written");
   const qwen = JSON.parse(fs.readFileSync(path.join(dir, ".qwen/settings.json"), "utf-8"));
   assert.equal(qwen.mcpServers["common-context"].command, "common-context-mcp");
@@ -385,9 +386,9 @@ test("end to end over a fake home: Muse, Qwen, Zed, Windsurf and Kiro are config
   assert.match(qwenMd, /^<!-- common-context:start -->/);
   assert.match(qwenMd, /# My memory/, "existing memory kept after the block");
   const zed = JSON.parse(fs.readFileSync(path.join(dir, ".config/zed/settings.json"), "utf-8"));
-  assert.equal(zed.context_servers["common-context"].command, "common-context-mcp");
+  assert.deepEqual(zed.context_servers["common-context"], { source: "custom", command: "common-context-mcp", args: [], env: {} });
   const windsurf = JSON.parse(fs.readFileSync(path.join(dir, ".codeium/windsurf/mcp_config.json"), "utf-8"));
-  assert.equal(windsurf.mcpServers["common-context"].command, "common-context-mcp");
+  assert.deepEqual(windsurf.mcpServers["common-context"], { command: "common-context-mcp", args: [] });
   assert.match(fs.readFileSync(path.join(dir, ".codeium/windsurf/memories/global_rules.md"), "utf-8"), /common-context:start/);
   const kiro = JSON.parse(fs.readFileSync(path.join(dir, ".kiro/settings/mcp.json"), "utf-8"));
   assert.equal(kiro.mcpServers["common-context"].command, "common-context-mcp");
@@ -395,6 +396,15 @@ test("end to end over a fake home: Muse, Qwen, Zed, Windsurf and Kiro are config
   assert.match(r.stderr, /Muse\n.*manual step/s);
   assert.match(r.stderr, /Zed\n.*manual step/s);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("JSON MCP merge: ensure fills required top-level keys only when absent", () => {
+  const filled = agents.withJsonServer({}, "mcp_servers", { command: "common-context-mcp" }, { schema_version: 1 });
+  assert.equal(filled.schema_version, 1);
+  const kept = agents.withJsonServer({ schema_version: 2 }, "mcp_servers", { command: "common-context-mcp" }, { schema_version: 1 });
+  assert.equal(kept.schema_version, 2, "a present value is never overwritten");
+  const noEnsure = agents.withJsonServer({}, "mcpServers", { command: "common-context-mcp" });
+  assert.equal("schema_version" in noEnsure, false, "agents without ensure are untouched");
 });
 
 test("uninstall: JSON entries we wrote are removed, custom ones are kept", () => {
@@ -408,6 +418,10 @@ test("uninstall: JSON entries we wrote are removed, custom ones are kept", () =>
   assert.equal(r2.removed, false);
   assert.equal(r2.custom, true);
   assert.deepEqual(agents.removeJsonServer({ mcpServers: {} }, "mcpServers").removed, false);
+  const muse = { schema_version: 1, mcp_servers: { "common-context": { transport: "stdio", command: "common-context-mcp", args: [], mode: "optional" } } };
+  const r3 = agents.removeJsonServer(muse, "mcp_servers");
+  assert.equal(r3.removed, true, "full-shaped entries still match by command");
+  assert.equal(r3.config.schema_version, 1, "ensured keys are left for the tool");
 });
 
 test("uninstall: TOML/YAML/markdown round-trip to the original text", () => {

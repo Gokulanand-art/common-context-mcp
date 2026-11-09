@@ -133,6 +133,16 @@ test("redact covers fine-grained tokens and private keys", () => {
   assert.equal(redact("nothing secret here"), "nothing secret here");
 });
 
+test("redact covers Google token shapes", () => {
+  // Fixtures are concatenated so secret-scanning in transit cannot scrub them
+  // into vacuous literals; at runtime each is one realistic (but fake) token.
+  const ya29 = "ya29." + "a0AfH6SMBxFAKEfakefakefakefake01";
+  const aiza = "AIza" + "FAKEfakefakefakefakefakefakefake01X";
+  assert.doesNotMatch(redact("pasted " + ya29 + " here"), /ya29/);
+  assert.doesNotMatch(redact("key " + aiza + " here"), /AIza/);
+  assert.match(redact("saw " + ya29 + " end"), /saw \[REDACTED\] end/);
+});
+
 test("save_context stores redacted, capped text through the server", async () => {
   const { dir, file } = tempStore();
   const env = { ...process.env, CONTEXT_MCP_FILE: file };

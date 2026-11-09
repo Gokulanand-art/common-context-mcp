@@ -21,8 +21,11 @@ export async function runDoctor(): Promise<number> {
   const major = Number(process.versions.node.split(".")[0]);
   checks.push({ name: "node >= 18", ok: major >= 18, detail: `v${process.versions.node}` });
 
-  const onPath = spawnSync(process.platform === "win32" ? "where" : "which", ["common-context-mcp"], { stdio: "ignore" }).status === 0;
-  checks.push({ name: "common-context-mcp on PATH", ok: onPath, detail: onPath ? "yes" : "not found; check your npm global bin directory" });
+  const probe = process.platform === "win32" ? "where" : "which";
+  const ccm = spawnSync(probe, ["ccm"], { stdio: "ignore" }).status === 0;
+  const full = spawnSync(probe, ["common-context-mcp"], { stdio: "ignore" }).status === 0;
+  const found = [ccm && "ccm", full && "common-context-mcp"].filter(Boolean).join(", ");
+  checks.push({ name: "command on PATH", ok: ccm && full, detail: found || "neither ccm nor common-context-mcp found; check your npm global bin directory" });
 
   const dir = path.dirname(config.file);
   try {

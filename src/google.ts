@@ -4,6 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
 import { pruneSiblings } from "./fsutil.js";
+import { DEFAULT_OAUTH } from "./default-oauth.js";
 // Type-only: the store calls into this module at runtime, so a value import would cycle.
 import type { ContextStore } from "./store.js";
 
@@ -71,7 +72,13 @@ export function loadOAuthConfig(): OAuthConfig | null {
       if (clientId && clientSecret) break;
     }
   }
-  if (!clientId || !clientSecret) return null;
+  if (!clientId || !clientSecret) {
+    // Last resort: the client bundled with the package (when the maintainer filled it in).
+    if (DEFAULT_OAUTH.clientId && DEFAULT_OAUTH.clientSecret) {
+      return { clientId: DEFAULT_OAUTH.clientId, clientSecret: DEFAULT_OAUTH.clientSecret };
+    }
+    return null;
+  }
   return { clientId, clientSecret };
 }
 
@@ -292,6 +299,12 @@ export function openCommand(platform: string): { cmd: string; args: string[] } {
 }
 
 export async function login(): Promise<void> {
+  // The loopback flow needs a human and a browser; without a terminal it would
+  // print a URL and hang for 5 minutes. Experts port-forwarding the loopback
+  // port can force it with CONTEXT_MCP_ALLOW_HEADLESS_LOGIN=1.
+  if (!process.stdin.isTTY && !process.env.CONTEXT_MCP_ALLOW_HEADLESS_LOGIN) {
+    throw new Error("Login needs an interactive terminal with a browser. Run `ccm login` in a terminal.");
+  }
   const cfg = loadOAuthConfig();
   if (!cfg) throw new Error("Google OAuth not configured. Set GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET or create ~/.aura/google-oauth.env");
 

@@ -122,18 +122,27 @@ function isLegacy(entry) {
   return !!entry && LEGACY_COMMANDS.some(c => JSON.stringify(entry).includes(c));
 }
 
-/** Registers the server under `key` ("mcpServers" or "mcp"). Keeps every other key. */
-function withJsonServer(config, key, entry) {
+/**
+ * Registers the server under `key` ("mcpServers" or "mcp"). Keeps every other key.
+ * `ensure` sets top-level keys the tool requires (e.g. Muse's schema_version),
+ * but only when absent — a present value, even a newer one, is never overwritten.
+ */
+function withJsonServer(config, key, entry, ensure) {
   const next = JSON.parse(JSON.stringify(config));
+  if (ensure) {
+    for (const [k, v] of Object.entries(ensure)) {
+      if (!(k in next)) next[k] = v;
+    }
+  }
   next[key] = next[key] && typeof next[key] === "object" && !Array.isArray(next[key]) ? next[key] : {};
   const current = next[key][SERVER_KEY];
   if (!current || isLegacy(current)) next[key][SERVER_KEY] = entry;
   return next;
 }
 
-function applyJsonMcp(file, key, entry) {
+function applyJsonMcp(file, key, entry, ensure) {
   const before = readJsonStrict(file);
-  const after = withJsonServer(before, key, entry);
+  const after = withJsonServer(before, key, entry, ensure);
   if (JSON.stringify(before) === JSON.stringify(after)) return "unchanged";
   return writeIfChanged(file, readText(file), JSON.stringify(after, null, 2) + "\n");
 }
@@ -691,7 +700,7 @@ function removeOpenCodePlugin() {
 /**
  * Each entry:
  *   detect()   – is the tool installed here?
- *   mcp        – how to register the server ({kind:"json", file, key, entry} | {kind:"toml", file})
+ *   mcp        – how to register the server ({kind:"json", file, key, entry, ensure?} | {kind:"toml", file})
  *   rules      – {file} or {resolve()} for the protocol file, or null when it must be added by hand
  *   manual     – instructions shown when `rules` is null
  *   hooks      – "claude" | "codex" when the tool supports enforcement hooks, else absent
@@ -780,8 +789,10 @@ const AGENTS = [
     id: "muse",
     name: "Muse",
     detect: () => exists(path.join(HOME, ".config", "muse")) || which("muse"),
-    // The key is snake_case `mcp_servers`; camelCase `mcpServers` is ignored.
-    mcp: { kind: "json", file: path.join(HOME, ".config", "muse", "settings.json"), key: "mcp_servers", entry: { command: COMMAND } },
+    // The key is snake_case `mcp_servers`; camelCase `mcpServers` is ignored. Per Meta's docs
+    // each server needs `transport: "stdio"`, and the file needs `"schema_version": 1`.
+    // `mode: "optional"` skips us with a warning instead of aborting the run when unavailable.
+    mcp: { kind: "json", file: path.join(HOME, ".config", "muse", "settings.json"), key: "mcp_servers", entry: { transport: "stdio", command: COMMAND, args: [], mode: "optional" }, ensure: { schema_version: 1 } },
     rules: null,
     manual: `Muse Code documents no global rules file. In each project run \`muse init\`, then paste the contents of ${PROTOCOL_FILE} into its AGENTS.md`,
   },
@@ -796,8 +807,9 @@ const AGENTS = [
     id: "zed",
     name: "Zed",
     detect: () => exists(path.dirname(zedSettingsFile())) || which("zed"),
-    // Zed names the section `context_servers`; each entry is a stdio command.
-    mcp: { kind: "json", file: zedSettingsFile(), key: "context_servers", entry: { command: COMMAND } },
+    // Zed names the section `context_servers`, and `"source": "custom"` is mandatory:
+    // without it Zed silently ignores the entry.
+    mcp: { kind: "json", file: zedSettingsFile(), key: "context_servers", entry: { source: "custom", command: COMMAND, args: [], env: {} } },
     rules: null,
     manual: `Zed reads rules from each project's .rules directory. Create a .rules/common-context.md file in the project and paste the contents of ${PROTOCOL_FILE}`,
   },
@@ -805,7 +817,8 @@ const AGENTS = [
     id: "windsurf",
     name: "Windsurf",
     detect: () => exists(path.join(HOME, ".codeium")) || which("windsurf"),
-    mcp: { kind: "json", file: path.join(HOME, ".codeium", "windsurf", "mcp_config.json"), key: "mcpServers", entry: { command: COMMAND } },
+    // Windsurf documents stdio servers as `command` plus `args`.
+    mcp: { kind: "json", file: path.join(HOME, ".codeium", "windsurf", "mcp_config.json"), key: "mcpServers", entry: { command: COMMAND, args: [] } },
     rules: { file: path.join(HOME, ".codeium", "windsurf", "memories", "global_rules.md") },
   },
   {
@@ -845,7 +858,7 @@ function configureAgent(agent, { enableHooks = false } = {}) {
   const m = agent.mcp;
   if (m.kind === "json") {
     for (const file of m.files ? m.files() : [m.file]) {
-      results.push({ label: "MCP server", status: applyJsonMcp(file, m.key, m.entry), path: file });
+      results.push({ label: "MCP server", status: applyJsonMcp(file, m.key, m.entry, m.ensure), path: file });
     }
   } else if (m.kind === "yaml") {
     results.push({ label: "MCP server", status: applyYamlMcp(m.file, m.topKey), path: m.file });

@@ -185,7 +185,7 @@ async function run(argv) {
 
   if (!interactive && !yes) {
     log(`  Not running in a terminal, so nothing was ${uninstall ? "removed" : "configured"}.`);
-    log(`  Next step: run \`${uninstall ? "common-context-mcp-setup --uninstall" : "ccm"}\` in a terminal to choose tools.`);
+    log(`  Next step: run \`${uninstall ? "common-context-mcp-setup --uninstall" : "ccm"}\` in a terminal to ${uninstall ? "choose tools" : "log in and set up tools"}.`);
     log("");
     return;
   }

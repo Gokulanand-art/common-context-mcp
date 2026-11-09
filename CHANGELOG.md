@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.9.0
+
+- `ccm` without configured OAuth now prints Google Cloud setup steps (and the new `ccm --local` escape hatch for setup without login) instead of a bare error. The package supports a bundled OAuth client (`src/default-oauth.ts`) for the maintainer to fill in.
+- `login` refuses immediately without an interactive terminal instead of hanging for the browser callback (`CONTEXT_MCP_ALLOW_HEADLESS_LOGIN=1` forces it).
+- Fixed agent entries from doc re-verification: Muse needs `transport: "stdio"` (+ `mode: "optional"`, file-level `schema_version: 1`), Zed silently ignores entries without `"source": "custom"`, Windsurf documents `command` plus `args`. Qwen and Kiro verified fine as-is.
+- `doctor` now checks that both `ccm` and `common-context-mcp` are on PATH. Redaction also covers Google `ya29.` tokens and `AIza` API keys. Onboarding errors can no longer crash with a stack trace.
+
 ## 3.8.0
 
 - New short command **`ccm`**: `ccm doctor`, `ccm login`, `ccm sync`, `ccm --upgrade`, `ccm --help`, and more. Bare `ccm` onboards: it opens the Google login page (required), then back in the terminal sets up every detected AI agent and finishes. The full `common-context-mcp` command keeps working as before (it still starts the MCP server agents run).

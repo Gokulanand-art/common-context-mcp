@@ -25,6 +25,7 @@ Usage:
   ${prog} sync       Pull remote changes, then push (this project's store)
   ${prog} status     Show login/token/sync state
   ${prog} --help     Print this help
+  ${prog} --local    Set up agents without logging in (local-only, no cloud sync)
   common-context-mcp-setup      Register the server with detected AI agents
 
 Environment:
@@ -152,6 +153,16 @@ export function runCLI({ prog, bare, unknown, argv }: CLIOptions): void {
     process.stdout.write(help);
     process.exit(0);
   }
+  if (arg === "--local") {
+    runOnboarding({ skipLogin: true }).then(
+      code => process.exit(code),
+      e => {
+        console.error(e instanceof Error ? e.message : String(e));
+        process.exit(1);
+      }
+    );
+    return; // keep process alive
+  }
   if (arg === "hook") {
     runHook(argv[1]).then(() => process.exit(0));
     return; // keep process alive
@@ -159,7 +170,13 @@ export function runCLI({ prog, bare, unknown, argv }: CLIOptions): void {
 
   if (arg === undefined) {
     if (bare === "onboard") {
-      runOnboarding().then(code => process.exit(code));
+      runOnboarding().then(
+        code => process.exit(code),
+        e => {
+          console.error(e instanceof Error ? e.message : String(e));
+          process.exit(1);
+        }
+      );
       return; // keep process alive
     }
   } else if (unknown === "usage") {

@@ -30,6 +30,28 @@ test("doctor exits 1 when the store cannot be read safely", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test("doctor reports which commands are on PATH", () => {
+  if (process.platform === "win32") return; // the fake bin relies on which/exec-bit semantics
+  const { dir, file } = tempStore();
+  const bin = path.join(dir, "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const run = p => spawnSync(process.execPath, [path.join(__dirname, "..", "dist", "index.js"), "doctor"], {
+    // System dirs stay so the `which` probe itself resolves; npm bins do not.
+    env: { ...process.env, CONTEXT_MCP_FILE: file, PATH: `${p}:/usr/bin:/bin` },
+    encoding: "utf-8",
+  });
+  const missing = run(bin);
+  assert.match(missing.stdout, /FAIL  command on PATH/);
+  assert.match(missing.stdout, /neither ccm nor common-context-mcp found/);
+  for (const name of ["ccm", "common-context-mcp"]) {
+    fs.writeFileSync(path.join(bin, name), "#!/bin/sh\n", { mode: 0o755 });
+  }
+  const found = run(bin);
+  assert.match(found.stdout, /PASS  command on PATH/);
+  assert.match(found.stdout, /ccm, common-context-mcp/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("doctor reports sync state without failing when logged out", () => {
   const { dir, file } = tempStore();
   const home = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "ccmcp-doc-"));

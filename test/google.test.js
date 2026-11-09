@@ -493,6 +493,10 @@ test("end to end in-process: tool writes reach the cloud while logged in", async
   global.fetch = drive.fetch;
   login();
   const { dir, file } = tempStore();
+  // Pin via the real env: the server only trusts process.env for pinning, and
+  // without it the tools would follow the working directory (this repo!).
+  const prevFile = process.env.CONTEXT_MCP_FILE;
+  process.env.CONTEXT_MCP_FILE = file;
   const cfg = loadConfig({ CONTEXT_MCP_FILE: file, CONTEXT_MCP_AGENT_ID: "push-agent" });
   const [clientT, serverT] = InMemoryTransport.createLinkedPair();
   const server = createServer(cfg);
@@ -510,6 +514,8 @@ test("end to end in-process: tool writes reach the cloud while logged in", async
     assert.match(drive.get(NAME).content, /"k"/);
   } finally {
     global.fetch = realFetch;
+    if (prevFile === undefined) delete process.env.CONTEXT_MCP_FILE;
+    else process.env.CONTEXT_MCP_FILE = prevFile;
     await client.close().catch(() => {});
     fs.rmSync(dir, { recursive: true, force: true });
   }

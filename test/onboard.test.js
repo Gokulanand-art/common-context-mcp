@@ -73,8 +73,62 @@ test("bare ccm while logged out: login is required, setup never runs", () => {
   const r = spawnSync(process.execPath, [CCM], { env, encoding: "utf-8" });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /Google OAuth not configured/);
+  assert.match(r.stderr, /console\.cloud\.google\.com\/apis\/credentials/, "points at client setup steps");
+  assert.match(r.stderr, /ccm --local/, "names the local-only escape hatch");
   assert.equal(fs.existsSync(marker), false, "setup never ran without login");
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("ccm --local: sets up agents with no login at all", () => {
+  if (process.platform === "win32") return;
+  const { dir } = tempStore();
+  const marker = recordingSetup(dir);
+  const env = { ...process.env, HOME: dir, PATH: `${path.join(dir, "bin")}:${process.env.PATH}`, CONTEXT_MCP_NO_HOOKS: "1" };
+  delete env.GOOGLE_CLIENT_ID;
+  delete env.GOOGLE_CLIENT_SECRET;
+  const r = spawnSync(process.execPath, [CCM, "--local"], { env, encoding: "utf-8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /local-only/);
+  assert.equal(fs.readFileSync(marker, "utf-8").trim(), "ran --yes");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("ccm login without a terminal fails fast instead of hanging", () => {
+  const { dir } = tempStore();
+  const env = {
+    ...process.env, HOME: dir,
+    GOOGLE_CLIENT_ID: "test-id", GOOGLE_CLIENT_SECRET: "test-secret",
+  };
+  const t0 = Date.now();
+  const r = spawnSync(process.execPath, [CCM, "login"], { env, encoding: "utf-8" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /interactive terminal/);
+  assert.ok(Date.now() - t0 < 30_000, "failed fast, did not wait for a browser");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("headless override skips the terminal check", () => {
+  const { dir } = tempStore();
+  const env = { ...process.env, HOME: dir, CONTEXT_MCP_ALLOW_HEADLESS_LOGIN: "1" };
+  delete env.GOOGLE_CLIENT_ID;
+  delete env.GOOGLE_CLIENT_SECRET;
+  const r = spawnSync(process.execPath, [CCM, "login"], { env, encoding: "utf-8" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /Google OAuth not configured/, "reached the creds check past the TTY guard");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("an unfilled bundled OAuth client is inert", () => {
+  const prevId = process.env.GOOGLE_CLIENT_ID;
+  const prevSecret = process.env.GOOGLE_CLIENT_SECRET;
+  delete process.env.GOOGLE_CLIENT_ID;
+  delete process.env.GOOGLE_CLIENT_SECRET;
+  try {
+    assert.equal(g.loadOAuthConfig(), null, "empty placeholder yields no config");
+  } finally {
+    if (prevId !== undefined) process.env.GOOGLE_CLIENT_ID = prevId;
+    if (prevSecret !== undefined) process.env.GOOGLE_CLIENT_SECRET = prevSecret;
+  }
 });
 
 test("runOnboarding: after login the local copy syncs, then setup runs", async () => {
@@ -85,11 +139,15 @@ test("runOnboarding: after login the local copy syncs, then setup runs", async (
   const prevPath = process.env.PATH;
   const prevFile = process.env.CONTEXT_MCP_FILE;
   const prevId = process.env.CONTEXT_MCP_SYNC_ID;
+  const prevClient = process.env.GOOGLE_CLIENT_ID;
+  const prevSecret = process.env.GOOGLE_CLIENT_SECRET;
   const realFetch = global.fetch;
   process.env.HOME = dir;
   process.env.PATH = `${path.join(dir, "bin")}:${prevPath}`;
   process.env.CONTEXT_MCP_FILE = path.join(dir, "store.json");
   process.env.CONTEXT_MCP_SYNC_ID = "onboard-test";
+  process.env.GOOGLE_CLIENT_ID = "test-id";
+  process.env.GOOGLE_CLIENT_SECRET = "test-secret";
   global.fetch = async () => { throw new Error("offline"); };
   try {
     const code = await runOnboarding({
@@ -107,6 +165,10 @@ test("runOnboarding: after login the local copy syncs, then setup runs", async (
     else process.env.CONTEXT_MCP_FILE = prevFile;
     if (prevId === undefined) delete process.env.CONTEXT_MCP_SYNC_ID;
     else process.env.CONTEXT_MCP_SYNC_ID = prevId;
+    if (prevClient === undefined) delete process.env.GOOGLE_CLIENT_ID;
+    else process.env.GOOGLE_CLIENT_ID = prevClient;
+    if (prevSecret === undefined) delete process.env.GOOGLE_CLIENT_SECRET;
+    else process.env.GOOGLE_CLIENT_SECRET = prevSecret;
     global.fetch = realFetch;
     fs.rmSync(dir, { recursive: true, force: true });
   }
