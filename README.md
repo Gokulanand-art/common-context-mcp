@@ -55,6 +55,8 @@ ccm
 Your agents talk to the store through MCP tools (the protocol below keeps them honest). You only need the CLI for health and sync:
 
 ```bash
+ccm login     # sign in with Google for Drive sync (opens the browser)
+ccm logout    # sign out (revokes and removes stored tokens)
 ccm doctor    # environment and store health
 ccm status    # Google Drive login/sync state
 ccm sync      # pull remote changes, then push
