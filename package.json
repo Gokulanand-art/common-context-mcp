@@ -1,6 +1,6 @@
 {
   "name": "common-context-mcp",
-  "version": "3.7.0",
+  "version": "3.8.0",
   "description": "Shared, append-only context store for AI agents over MCP: checkpoints, failures, claims, handoffs, crash recovery. Multi-process safe.",
   "mcpName": "io.github.Gokulanand-art/common-context-mcp",
   "main": "dist/index.js",
@@ -13,6 +13,7 @@
     "url": "https://github.com/Gokulanand-art/common-context-mcp/issues"
   },
   "bin": {
+    "ccm": "dist/ccm.js",
     "common-context-mcp": "dist/index.js",
     "common-context-mcp-setup": "scripts/postinstall.js",
     "agent-nervous-system-mcp": "dist/index.js",

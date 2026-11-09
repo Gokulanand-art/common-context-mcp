@@ -43,19 +43,20 @@ Agents checkpoint their work, record failures, claim files, hand off tasks, and 
 
 ```bash
 npm install -g common-context-mcp
-common-context-mcp-setup
+ccm
 ```
 
-The setup step detects your AI tools (Claude Code, Codex, Cursor, Gemini, OpenCode, Kilo Code, Cline, Goose, Freebuff, Hermes Agent, Muse, Qwen Code, Zed, Windsurf, Kiro) and wires up the MCP server + protocol block for each one you pick. To remove everything again later: `common-context-mcp-setup --uninstall` (backups are kept).
+`ccm` is the one command: it opens the Google login page first (required — the cloud stores your context), then back in the terminal it sets up every AI tool it finds (Claude Code, Codex, Cursor, Gemini, OpenCode, Kilo Code, Cline, Goose, Freebuff, Hermes Agent, Muse, Qwen Code, Zed, Windsurf, Kiro) and finishes. To remove everything again later: `common-context-mcp-setup --uninstall` (backups are kept).
 
 ### 2. Use it in any project
 
 Your agents talk to the store through MCP tools (the protocol below keeps them honest). You only need the CLI for health and sync:
 
 ```bash
-common-context-mcp doctor    # environment and store health
-common-context-mcp status     # Google Drive login/sync state
-common-context-mcp sync       # pull remote changes, then push
+ccm doctor    # environment and store health
+ccm status    # Google Drive login/sync state
+ccm sync      # pull remote changes, then push
+ccm --upgrade # upgrade the package, then re-run setup
 ```
 
 What an agent does in a session:
@@ -174,15 +175,17 @@ If a task involves long silent stretches, call `save_context` or `session_status
 Sign in with a Google account to sync each project's `common-context.json` with your Drive's hidden app folder, so the same context is available on every machine.
 
 ```bash
-common-context-mcp login      # opens Google consent in your browser
-common-context-mcp status     # shows login/token/sync state
-common-context-mcp sync       # force pull + push now
-common-context-mcp logout
+ccm login      # opens Google consent in your browser
+ccm status     # shows login/token/sync state
+ccm sync       # force pull + push now
+ccm logout     # revokes the token with Google, removes local tokens
 ```
 
+`login` needs a Google OAuth client: set `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, or put them in `~/.config/common-context-mcp/oauth.env`. `logout` revokes the token server-side when reachable, and always clears the local token file — even offline.
+
 - Scope is `drive.appdata` only (a hidden app folder; counts toward your 15 GB, nothing lands in My Drive).
-- Local file stays primary and works offline. `load_context` pulls and merges remote changes; writes push back (debounced ~500 ms). A push that fails (e.g. offline) is retried quietly by the running server about once a minute.
-- Hook-only writes (failure records) piggyback on the next server push rather than pushing themselves.
+- Login is part of first setup (`ccm` asks for it before anything else), because the cloud stores your context. After that everything also works offline from the local copy: while logged in, every write uploads in the background (within about half a second), and `load_context` pulls and merges remote changes so work continues from the cloud copy. Right after `login`, the current local file is stored to the cloud at once.
+- An upload that fails (e.g. offline) stays queued, and the running server retries it quietly about once a minute until it lands. Hook-only writes (failure records) ride along with the next upload rather than pushing themselves.
 - Each project gets its own remote file (`common-context--<project>.json`), so projects never overwrite each other. The identity is `CONTEXT_MCP_SYNC_ID` when set, else the git origin URL, else a hash of the folder. If you check out the same non-git project at different paths on different machines, set `CONTEXT_MCP_SYNC_ID` to the same value on all of them.
 - Sync state lives in `<store>.sync.json` next to the store (last remote version seen, last push hash). It is advisory: deleting it just causes one redundant sync.
 - Conflict strategy: union merge, nothing is deleted. Contexts resolve per key by latest `updated` (the losing value is kept in history); sessions union by id (a completed session is never resurrected by a stale copy; an id collision between different sessions keeps both); failures, broadcasts and patterns are unioned.
@@ -210,13 +213,13 @@ Two extra MCP tools: `sync_status` (read-only) and `sync_now`.
 ## 🩺 Health check
 
 ```bash
-common-context-mcp doctor
+ccm doctor
 ```
 
 Checks Node version, binary on PATH, store writability, read/lock capability, interrupted sessions, and agent registration. Exits non-zero if anything's broken. Also reports Google sync state (login freshness, remote reachability) as advisory warnings that never fail.
 
 ```bash
-common-context-mcp doctor --tokens
+ccm doctor --tokens
 ```
 
 Shows estimated token cost of each part agents see every session.

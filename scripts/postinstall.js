@@ -56,7 +56,7 @@ function printFound(detected) {
 
 function printSupported() {
   log("  Supported tools: " + agents.AGENTS.map(a => a.name).join(", ") + ".");
-  log("  None of them is installed here. Install one, then run `common-context-mcp-setup`.");
+  log("  None of them is installed here. Install one, then run `ccm`.");
   log("");
 }
 
@@ -158,11 +158,11 @@ async function run(argv) {
   const fromNpm = process.env.npm_lifecycle_event === "postinstall";
   if (fromNpm) {
     if (process.env.npm_config_global !== "true") {
-      log("[common-context] Local install: tool setup skipped. Run `common-context-mcp-setup` to configure tools.");
+      log("[common-context] Local install: tool setup skipped. Run `ccm` to log in and configure tools.");
       return;
     }
     if (process.env.CONTEXT_MCP_NO_SETUP) {
-      log("[common-context] CONTEXT_MCP_NO_SETUP is set: tool setup skipped. Run `common-context-mcp-setup` later.");
+      log("[common-context] CONTEXT_MCP_NO_SETUP is set: tool setup skipped. Run `ccm` later.");
       return;
     }
   }
@@ -185,7 +185,7 @@ async function run(argv) {
 
   if (!interactive && !yes) {
     log(`  Not running in a terminal, so nothing was ${uninstall ? "removed" : "configured"}.`);
-    log(`  Next step: run \`common-context-mcp-setup${uninstall ? " --uninstall" : ""}\` in a terminal to choose tools.`);
+    log(`  Next step: run \`${uninstall ? "common-context-mcp-setup --uninstall" : "ccm"}\` in a terminal to choose tools.`);
     log("");
     return;
   }

@@ -79,7 +79,10 @@ export function loadTokens(): Tokens | null {
   try {
     const raw = fs.readFileSync(tokenFile(), "utf-8");
     const t = JSON.parse(raw) as Tokens;
-    if (!t.access_token) return null;
+    // A hand-edited or corrupt file must read as logged-out, never as a
+    // half-token that crashes status or sync further down the line.
+    if (!t || typeof t !== "object" || Array.isArray(t)) return null;
+    if (typeof t.access_token !== "string" || !t.access_token) return null;
     return t;
   } catch {
     return null;
@@ -95,12 +98,34 @@ export function clearTokens(): void {
   try { fs.unlinkSync(tokenFile()); } catch {}
 }
 
+/**
+ * Logs out cleanly: revokes the token with Google so it cannot be used again,
+ * then removes the local file. The revoke is best-effort — an offline logout
+ * still clears everything locally. Returns "revoked" when Google confirmed,
+ * "local-only" otherwise.
+ */
+export async function logout(): Promise<"revoked" | "local-only"> {
+  const tokens = loadTokens();
+  let revoked = false;
+  if (tokens) {
+    try {
+      const res = await timedFetch(
+        `https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(tokens.access_token)}`,
+        { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" } }
+      );
+      revoked = res.ok;
+    } catch {}
+  }
+  clearTokens();
+  return revoked ? "revoked" : "local-only";
+}
+
 export function isLoggedIn(): boolean {
   return loadTokens() !== null;
 }
 
 async function refreshAccessToken(cfg: OAuthConfig, tokens: Tokens): Promise<Tokens> {
-  if (!tokens.refresh_token) throw new Error("no refresh_token; run `common-context-mcp login` again");
+  if (!tokens.refresh_token) throw new Error("no refresh_token; run `ccm login` again");
   const body = new URLSearchParams({
     client_id: cfg.clientId,
     client_secret: cfg.clientSecret,
@@ -112,8 +137,16 @@ async function refreshAccessToken(cfg: OAuthConfig, tokens: Tokens): Promise<Tok
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
   });
-  const json = (await res.json()) as any;
+  let json: any;
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error("token refresh failed: unreadable response from Google");
+  }
   if (!res.ok) throw new Error(`token refresh failed: ${json.error_description || json.error || res.status}`);
+  if (!json || typeof json.access_token !== "string" || !json.access_token) {
+    throw new Error("token refresh failed: Google returned no access token");
+  }
   const updated: Tokens = {
     access_token: json.access_token,
     refresh_token: json.refresh_token || tokens.refresh_token,
@@ -187,7 +220,7 @@ export async function getAccessToken(force = false): Promise<string> {
   const cfg = loadOAuthConfig();
   if (!cfg) throw new Error("Google OAuth not configured. Set GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET or create ~/.aura/google-oauth.env");
   let tokens = loadTokens();
-  if (!tokens) throw new Error("Not logged in. Run `common-context-mcp login`.");
+  if (!tokens) throw new Error("Not logged in. Run `ccm login`.");
   if (force || !(tokens.expiry_date > 0) || Date.now() > tokens.expiry_date - 60_000) {
     tokens = await lockedRefresh(cfg, tokens);
   }
@@ -211,7 +244,7 @@ async function driveFetch(url: string, init: RequestInit = {}): Promise<Response
       token = await getAccessToken(true);
     } catch (e) {
       throw new Error(
-        `Drive rejected the stored token and refresh failed (${(e as Error).message}); run \`common-context-mcp login\` again`
+        `Drive rejected the stored token and refresh failed (${(e as Error).message}); run \`ccm login\` again`
       );
     }
     res = await attempt(token);
@@ -242,7 +275,7 @@ export function escHtml(s: string): string {
 export function parseAuthCallback(reqUrl: string, expectedState: string): string {
   const u = new URL(reqUrl, "http://127.0.0.1");
   const err = u.searchParams.get("error");
-  if (err) throw new Error(err);
+  if (err) throw new Error(`login denied in the browser (${err})`);
   const code = u.searchParams.get("code");
   if (!code) throw new Error("missing code");
   if (u.searchParams.get("state") !== expectedState) {
@@ -319,6 +352,16 @@ export async function login(): Promise<void> {
     server.close();
   }
 
+  const tokens = await exchangeCode(cfg, code, redirectUri);
+  saveTokens(tokens);
+  process.stdout.write(`✓ Logged in. Tokens stored at ${tokenFile()}\n`);
+}
+
+/**
+ * Trades a browser auth code for tokens. The response is validated before
+ * anything is saved, so a bad reply never leaves a broken token file behind.
+ */
+export async function exchangeCode(cfg: OAuthConfig, code: string, redirectUri: string): Promise<Tokens> {
   const body = new URLSearchParams({
     client_id: cfg.clientId,
     client_secret: cfg.clientSecret,
@@ -331,9 +374,16 @@ export async function login(): Promise<void> {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: body.toString(),
   });
-  const json = (await res.json()) as any;
-  if (!res.ok) throw new Error(`token exchange failed: ${json.error_description || json.error || res.status}`);
-
+  let json: any;
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error("token exchange failed: unreadable response from Google");
+  }
+  if (!res.ok) throw new Error(`token exchange failed: ${json?.error_description || json?.error || res.status}`);
+  if (!json || typeof json.access_token !== "string" || !json.access_token) {
+    throw new Error("token exchange failed: Google returned no access token");
+  }
   const tokens: Tokens = {
     access_token: json.access_token,
     refresh_token: json.refresh_token,
@@ -345,8 +395,7 @@ export async function login(): Promise<void> {
     const existing = loadTokens();
     if (existing?.refresh_token) tokens.refresh_token = existing.refresh_token;
   }
-  saveTokens(tokens);
-  process.stdout.write(`✓ Logged in. Tokens stored at ${tokenFile()}\n`);
+  return tokens;
 }
 
 const DRIVE_API = "https://www.googleapis.com/drive/v3";
@@ -639,25 +688,36 @@ export async function pullIfNewer(store: ContextStore): Promise<{ pulled: boolea
   return changed ? { pulled: true, reason: "merged remote changes" } : { pulled: false, reason: "already in sync" };
 }
 
+/**
+ * Stores with local changes the cloud has not seen yet. Entries clear when
+ * an upload succeeds; failures stay queued for the retry timer.
+ */
 const pendingPush = new Map<string, ContextStore>();
 let pushTimer: NodeJS.Timeout | null = null;
 
+/** Queues the store for upload at the next push attempt. Cheap and idempotent. */
+export function markNeedsPush(store: ContextStore): void {
+  pendingPush.set(store.file, store);
+}
+
+/**
+ * Queues the store and flushes shortly after, in the background: while logged
+ * in, the cloud copy follows every write within about half a second. Logged
+ * out, this is a no-op and everything stays local.
+ */
 export function schedulePush(store: ContextStore): void {
   if (!isLoggedIn()) return;
-  pendingPush.set(store.file, store);
+  markNeedsPush(store);
   if (pushTimer) clearTimeout(pushTimer);
   pushTimer = setTimeout(() => {
     pushTimer = null;
-    const batch = [...pendingPush.values()];
-    pendingPush.clear();
-    void (async () => {
-      for (const s of batch) {
-        try {
-          await pushNow(s);
-        } catch {}
-      }
-    })();
+    void flushPendingPush();
   }, 500);
+}
+
+/** Stores still waiting for upload, for the server's retry timer. */
+export function pendingPushStores(): ContextStore[] {
+  return [...pendingPush.values()];
 }
 
 /**
@@ -676,12 +736,14 @@ export async function pushNow(store: ContextStore): Promise<{ pushed: boolean; r
   const remoteName = remoteNameFor(file);
   const state = loadSyncState(file);
   if (state.remote === remoteName && sha1hex(content) === state.localHash) {
+    pendingPush.delete(file); // the cloud already has this exact copy
     return { pushed: false, reason: "no local changes" };
   }
   let existing: DriveFileMeta | null;
   try {
     existing = await findDriveFile(remoteName);
   } catch (e) {
+    pendingPush.set(file, store); // stays queued for the retry timer
     return { pushed: false, reason: `drive error: ${(e as Error).message}` };
   }
   let note = "";
@@ -691,11 +753,13 @@ export async function pushNow(store: ContextStore): Promise<{ pushed: boolean; r
     // garbage). Anything else — download failed, newer schema — aborts the push.
     const after = loadSyncState(file);
     if (after.remote !== remoteName || existing.modifiedTime !== after.remoteModifiedTime) {
+      pendingPush.set(file, store);
       return { pushed: false, reason: `remote changed; pull first (${pull.reason})` };
     }
     try {
       content = fs.readFileSync(file, "utf-8");
     } catch {
+      pendingPush.set(file, store);
       return { pushed: false, reason: "local file vanished during merge" };
     }
     if (pull.pulled) note = " (merged remote first)";
@@ -708,10 +772,26 @@ export async function pushNow(store: ContextStore): Promise<{ pushed: boolean; r
       remoteModifiedTime: meta.modifiedTime,
       lastPush: new Date().toISOString(),
     });
+    pendingPush.delete(file);
     return { pushed: true, reason: (existing ? "updated" : "created") + note };
   } catch (e) {
+    pendingPush.set(file, store);
     return { pushed: false, reason: `drive error: ${(e as Error).message}` };
   }
+}
+
+/**
+ * First sync right after login: pulls the cloud copy in, then stores the
+ * local file back up. Append-only like every other push — the remote is
+ * merged first, never overwritten.
+ */
+export async function syncAfterLogin(store: ContextStore): Promise<{
+  pull: { pulled: boolean; reason: string };
+  push: { pushed: boolean; reason: string };
+}> {
+  const pull = await pullIfNewer(store);
+  const push = await pushNow(store);
+  return { pull, push };
 }
 
 export function syncStatus(storeFile?: string): string {
@@ -723,7 +803,8 @@ export function syncStatus(storeFile?: string): string {
     `Token file: ${tokenFile()}`,
   ];
   if (tokens) {
-    lines.push(`Token expires: ${new Date(tokens.expiry_date).toISOString()}`);
+    const exp = tokens.expiry_date;
+    lines.push(`Token expires: ${typeof exp === "number" && Number.isFinite(exp) ? new Date(exp).toISOString() : "unknown"}`);
     lines.push(`Has refresh token: ${tokens.refresh_token ? "yes" : "no"}`);
   }
   if (storeFile) {
@@ -736,6 +817,7 @@ export function syncStatus(storeFile?: string): string {
   return lines.join("\n");
 }
 
+/** Uploads every store waiting for upload. Never throws. */
 export async function flushPendingPush(): Promise<void> {
   if (pushTimer) {
     clearTimeout(pushTimer);
@@ -745,7 +827,7 @@ export async function flushPendingPush(): Promise<void> {
   pendingPush.clear();
   for (const s of batch) {
     try {
-      await pushNow(s);
+      await pushNow(s); // re-queues itself on failure
     } catch {}
   }
 }

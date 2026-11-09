@@ -87,7 +87,7 @@ function fakeDrive() {
 }
 
 test.afterEach(async () => {
-  // Flush debounced pushes while the stub is still installed, so no timer fires into a later test.
+  // Flush queued uploads while the stub is still installed, so nothing leaks into a later test.
   try {
     await g.flushPendingPush();
   } catch {}
@@ -113,6 +113,94 @@ test("loadTokens/saveTokens roundtrip", () => {
   login();
   assert.equal(g.loadTokens().access_token, "test-access");
   assert.equal(g.isLoggedIn(), true);
+});
+
+test("loadTokens rejects malformed token files instead of trusting them", () => {
+  fs.mkdirSync(path.dirname(TOKEN), { recursive: true });
+  for (const bad of ['["not","an","object"]', '{"access_token":123}', '{"access_token":""}', '{"expiry_date":1}', "not json"]) {
+    fs.writeFileSync(TOKEN, bad);
+    assert.equal(g.loadTokens(), null, bad);
+    assert.equal(g.isLoggedIn(), false, bad);
+  }
+});
+
+test("syncStatus never crashes on a token file without an expiry", () => {
+  fs.mkdirSync(path.dirname(TOKEN), { recursive: true });
+  fs.writeFileSync(TOKEN, JSON.stringify({ access_token: "x" }));
+  const out = g.syncStatus();
+  assert.match(out, /Logged in: yes/);
+  assert.match(out, /Token expires: unknown/);
+});
+
+test("logout revokes the token with Google, then clears the file", async () => {
+  login();
+  let revoked = null;
+  global.fetch = async (url, opts) => {
+    revoked = { url: String(url), method: (opts && opts.method) || "GET" };
+    return { ok: true, status: 200 };
+  };
+  try {
+    assert.equal(await g.logout(), "revoked");
+    assert.match(revoked.url, /oauth2\.googleapis\.com\/revoke/);
+    assert.match(revoked.url, /test-access/);
+    assert.equal(fs.existsSync(TOKEN), false, "token file removed");
+    assert.equal(g.isLoggedIn(), false);
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
+test("logout still clears everything when Google is unreachable", async () => {
+  login();
+  global.fetch = async () => { throw new Error("offline"); };
+  try {
+    assert.equal(await g.logout(), "local-only");
+    assert.equal(fs.existsSync(TOKEN), false, "token file removed");
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
+test("logout with nothing stored succeeds quietly", async () => {
+  let calls = 0;
+  global.fetch = async () => { calls++; return { ok: true, status: 200 }; };
+  try {
+    assert.equal(await g.logout(), "local-only");
+    assert.equal(calls, 0, "no revoke without a token");
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
+test("login code exchange rejects garbage instead of saving it", async () => {
+  const cfg = { clientId: "id", clientSecret: "secret" };
+  global.fetch = async () => ({ ok: true, status: 200, json: async () => ({ no_token: true }), text: async () => "" });
+  try {
+    await assert.rejects(g.exchangeCode(cfg, "code", "http://127.0.0.1:9/callback"), /token exchange failed/);
+    assert.equal(fs.existsSync(TOKEN), false, "nothing saved");
+  } finally {
+    global.fetch = realFetch;
+  }
+  global.fetch = async () => ({ ok: false, status: 400, json: async () => ({ error: "invalid_grant" }), text: async () => "" });
+  try {
+    await assert.rejects(g.exchangeCode(cfg, "code", "http://127.0.0.1:9/callback"), /invalid_grant/);
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
+test("token refresh fails cleanly on an unreadable response", async () => {
+  g.saveTokens({ access_token: "stale", refresh_token: "r", expiry_date: Date.now() - 1000 });
+  global.fetch = async () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError("bad json"); }, text: async () => "" });
+  try {
+    await assert.rejects(g.getAccessToken(), /token refresh failed/);
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
+test("a denied browser login says so plainly", () => {
+  assert.throws(() => g.parseAuthCallback("/callback?error=access_denied&state=s", "s"), /denied in the browser.*access_denied/);
 });
 
 test("pullIfNewer and pushNow no-op when not logged in", async () => {
@@ -312,8 +400,8 @@ test("a newer-schema remote is never overwritten", async () => {
   }
 });
 
-test("writes push automatically after the debounce", async () => {
-  process.env.CONTEXT_MCP_SYNC_ID = "debounce-test";
+test("writes upload to the cloud while logged in", async () => {
+  process.env.CONTEXT_MCP_SYNC_ID = "continuous-test";
   const drive = fakeDrive();
   global.fetch = drive.fetch;
   login();
@@ -322,9 +410,107 @@ test("writes push automatically after the debounce", async () => {
     store.write(d => {
       d.contexts.k = { value: "v", tags: [], agent: "a", updated: new Date().toISOString(), history: [] };
     });
-    await new Promise(r => setTimeout(r, 900));
-    assert.ok(drive.get("common-context--debounce-test.json"), "debounced push uploaded the store");
+    const deadline = Date.now() + 5000;
+    while (!drive.get("common-context--continuous-test.json") && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 50));
+    }
+    assert.ok(drive.get("common-context--continuous-test.json"), "the write reached the cloud");
+    const calls = [];
+    global.fetch = (...a) => { calls.push(a); return drive.fetch(...a); };
+    await g.flushPendingPush();
+    assert.equal(calls.length, 0, "a delivered upload is not retried");
   } finally {
+    global.fetch = realFetch;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("writes stay local when logged out", async () => {
+  process.env.CONTEXT_MCP_SYNC_ID = "logged-out-test";
+  const drive = fakeDrive();
+  let calls = 0;
+  global.fetch = (...a) => { calls++; return drive.fetch(...a); };
+  const { dir, store } = makeStore();
+  try {
+    store.write(d => {
+      d.contexts.k = { value: "v", tags: [], agent: "a", updated: new Date().toISOString(), history: [] };
+    });
+    await g.flushPendingPush();
+    await new Promise(r => setTimeout(r, 900));
+    assert.equal(calls, 0, "no network without login");
+    assert.equal(drive.get("common-context--logged-out-test.json"), undefined);
+  } finally {
+    global.fetch = realFetch;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a failed push stays queued until it is delivered", async () => {
+  process.env.CONTEXT_MCP_SYNC_ID = "retry-test-2";
+  const drive = fakeDrive();
+  login();
+  const { dir, store } = makeStore();
+  try {
+    store.write(() => {});
+    global.fetch = async () => { throw new Error("offline"); };
+    g.markNeedsPush(store);
+    const failed = await g.pushNow(store);
+    assert.equal(failed.pushed, false);
+    global.fetch = drive.fetch;
+    await g.flushPendingPush();
+    assert.ok(drive.get("common-context--retry-test-2.json"), "retry delivered the queued upload");
+  } finally {
+    global.fetch = realFetch;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("syncAfterLogin stores the local copy in the cloud", async () => {
+  process.env.CONTEXT_MCP_SYNC_ID = "login-upload-test";
+  const drive = fakeDrive();
+  global.fetch = drive.fetch;
+  login();
+  const { dir, store } = makeStore();
+  try {
+    store.write(d => {
+      d.contexts.k = { value: "v", tags: [], agent: "a", updated: new Date().toISOString(), history: [] };
+    });
+    const { push } = await g.syncAfterLogin(store);
+    assert.equal(push.pushed, true, push.reason);
+    assert.match(drive.get("common-context--login-upload-test.json").content, /"k"/);
+  } finally {
+    global.fetch = realFetch;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("end to end in-process: tool writes reach the cloud while logged in", async () => {
+  process.env.CONTEXT_MCP_SYNC_ID = "tool-push-test";
+  const { Client } = require("@modelcontextprotocol/sdk/client/index.js");
+  const { InMemoryTransport } = require("@modelcontextprotocol/sdk/inMemory.js");
+  const { createServer } = require("../dist/server.js");
+  const drive = fakeDrive();
+  global.fetch = drive.fetch;
+  login();
+  const { dir, file } = tempStore();
+  const cfg = loadConfig({ CONTEXT_MCP_FILE: file, CONTEXT_MCP_AGENT_ID: "push-agent" });
+  const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+  const server = createServer(cfg);
+  await server.connect(serverT);
+  const client = new Client({ name: "push-test", version: "0.0.0" });
+  await client.connect(clientT);
+  const call = (name, args = {}) => client.callTool({ name, arguments: args });
+  const NAME = "common-context--tool-push-test.json";
+  try {
+    await call("load_context");
+    await call("save_context", { key: "k", value: "v" });
+    const deadline = Date.now() + 5000;
+    while (!drive.get(NAME) && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+    assert.ok(drive.get(NAME), "the tool write reached the cloud");
+    assert.match(drive.get(NAME).content, /"k"/);
+  } finally {
+    global.fetch = realFetch;
+    await client.close().catch(() => {});
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

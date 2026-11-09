@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.8.0
+
+- New short command **`ccm`**: `ccm doctor`, `ccm login`, `ccm sync`, `ccm --upgrade`, `ccm --help`, and more. Bare `ccm` onboards: it opens the Google login page (required), then back in the terminal sets up every detected AI agent and finishes. The full `common-context-mcp` command keeps working as before (it still starts the MCP server agents run).
+- New `ccm --upgrade`: upgrades the global package to the latest release, then re-runs setup so new agent configs are applied. Extra args (e.g. `--yes`) pass through to setup. From a local checkout it only re-runs setup and never touches the package.
+- Cleaner login/logout: `logout` now revokes the token with Google (best-effort) before removing the local file, and says which happened. `status` no longer crashes on a token file without an expiry. Malformed token files read as logged-out; login/refresh reject unreadable or token-less Google responses with a plain error instead of saving garbage; denying consent in the browser reports `login denied in the browser`.
+- Once logged in, the cloud stores the context: every write uploads in the background (append-only merge as before), `load_context` pulls remote changes in, and `login` stores the current local file at once. Failed uploads stay queued and retry quietly about once a minute. Login remains fully optional — logged out, everything stays local.
+
 ## 3.7.0
 
 - Setup now configures five more tools: **Muse** (`~/.config/muse/settings.json`, snake_case `mcp_servers` key), **Qwen Code** (`~/.qwen/settings.json` + `~/.qwen/QWEN.md`), **Zed** (`~/.config/zed/settings.json`, `context_servers` key), **Windsurf** (`~/.codeium/windsurf/mcp_config.json` + global rules), and **Kiro** (`~/.kiro/settings/mcp.json` + `~/.kiro/steering/common-context.md`). Locations were checked against each tool's docs.

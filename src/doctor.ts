@@ -65,11 +65,11 @@ export async function runDoctor(): Promise<number> {
         return false;
       }
     });
-  checks.push({ name: "registered with an agent", ok: registered.length > 0, warn: true, detail: registered.length ? registered.join(", ") : "none found; run common-context-mcp-setup" });
+  checks.push({ name: "registered with an agent", ok: registered.length > 0, warn: true, detail: registered.length ? registered.join(", ") : "none found; run ccm" });
 
-  // Sync checks are advisory: sync is optional and network-dependent, so they never fail.
+  // Sync checks are advisory: sync is network-dependent, so they never fail.
   if (!isLoggedIn()) {
-    checks.push({ name: "drive sync", ok: true, warn: true, detail: "not logged in (optional); run common-context-mcp login to enable" });
+    checks.push({ name: "drive sync", ok: true, warn: true, detail: "not logged in; run ccm to log in and set up" });
   } else {
     const tokens = loadTokens();
     const expired = !(tokens && tokens.expiry_date > Date.now());
@@ -81,7 +81,7 @@ export async function runDoctor(): Promise<number> {
         ? `token valid until ${new Date(tokens!.expiry_date).toISOString()}`
         : tokens?.refresh_token
           ? "access token expired; will refresh on next sync"
-          : "access token expired with no refresh token; run common-context-mcp login again",
+          : "access token expired with no refresh token; run ccm login again",
     });
     try {
       const remote = remoteNameFor(config.file);

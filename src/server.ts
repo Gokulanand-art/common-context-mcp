@@ -18,7 +18,7 @@ import {
 import { excerpt, renderLoad, type Detail } from "./render.js";
 import { redact } from "./redact.js";
 import { log } from "./log.js";
-import { LEGACY_REMOTE_NAME, isLoggedIn, listSyncedRemotes, pullIfNewer, pushNow, remoteNameFor, syncStatus } from "./google.js";
+import { LEGACY_REMOTE_NAME, isLoggedIn, listSyncedRemotes, pendingPushStores, pullIfNewer, pushNow, remoteNameFor, syncStatus } from "./google.js";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const VERSION: string = (require("../package.json") as { version: string }).version;
@@ -97,29 +97,25 @@ export function createServer(initial: Config = loadConfig()): McpServer {
     s.heartbeat = now();
   }
 
-  /** Every store this server has bound, so the retry timer can push them all. */
-  const knownStores = new Map<string, ContextStore>([[initial.file, new ContextStore(initial)]]);
-
   /** Points the store at a folder. A different folder starts a new session: the agent must load it again. */
   function bindProject(dir: string): void {
     if (dir === projectDir) return;
     projectDir = dir;
     config = { ...initial, file: path.join(dir, STORE_FILE_NAME) };
     store = new ContextStore(config);
-    knownStores.set(config.file, store);
     state.loaded = false;
     state.completed = false;
     state.sessionId = null;
     log.info(`project: ${dir} (store: ${config.file})`);
   }
 
-  // Failed pushes retry quietly: a push that dies offline would otherwise wait for the next
-  // write. pushNow is a cheap local hash check when nothing changed, so the idle cost is ~nil.
-  // Unref'd so it never holds the process open on its own.
+  // Failed uploads retry quietly about once a minute. Only queued stores are
+  // attempted, so idle cost is ~nil. Unref'd so it never holds the process
+  // open on its own.
   const retryTimer = setInterval(() => {
     if (!isLoggedIn()) return;
     void (async () => {
-      for (const s of knownStores.values()) {
+      for (const s of pendingPushStores()) {
         try {
           await pushNow(s);
         } catch {}

@@ -465,6 +465,7 @@ export class ContextStore {
     const tmp = `${this.cfg.file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
     fs.renameSync(tmp, this.cfg.file);
+    // While logged in the cloud copy follows every write; logged out this is a no-op.
     try { schedulePush(this); } catch {}
   }
 
