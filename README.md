@@ -155,7 +155,7 @@ Text outside the managed block is never touched; reruns replace only that block.
 | `CONTEXT_MCP_LOG_LEVEL` | `warn` | `error`, `warn`, `info`, or `debug` |
 | `CONTEXT_MCP_LOG` | `text` | `text` or `json` log lines on stderr |
 | `CONTEXT_MCP_NO_SETUP` | unset | Skip setup prompt after global install |
-| `CONTEXT_MCP_NO_HOOKS` | unset | Skip Claude Code enforcement hooks in `--yes` mode |
+| `CONTEXT_MCP_NO_HOOKS` | unset | Skip enforcement hooks for every tool that has them (Claude Code, Codex, Cursor, Gemini, OpenCode, Muse) in `--yes` mode |
 | `GOOGLE_CLIENT_ID` | (from ~/.aura/google-oauth.env) | Google OAuth client ID (Desktop app type) |
 | `GOOGLE_CLIENT_SECRET` | (from ~/.aura/google-oauth.env) | Google OAuth client secret |
 | `CONTEXT_MCP_ENFORCE` | unset | Set to `0` to turn off Claude Code enforcement at runtime |
