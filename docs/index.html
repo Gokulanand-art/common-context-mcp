@@ -430,6 +430,44 @@
     line-height: 1.5;
   }
 
+  /* ─── Protocol (5 steps) ─── */
+  .flow.five { grid-template-columns: repeat(5, 1fr); }
+
+  /* ─── Agent directory ─── */
+  .agent-list {
+    max-width: 800px;
+    margin: 0 auto;
+    border-top: 1px solid var(--border);
+  }
+
+  .agent-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 4px;
+    border-bottom: 1px solid var(--border);
+    font-size: 15px;
+  }
+
+  .agent-row .name { font-weight: 600; }
+
+  .agent-row .detail { color: var(--text-muted); font-size: 13px; }
+
+  .tag {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .tag.hooks { color: var(--green); border-color: rgba(0, 255, 136, 0.35); }
+  .tag.skill { color: var(--accent); border-color: var(--accent-dim); }
+  .tag.plugin { color: var(--blue); border-color: rgba(68, 136, 255, 0.35); }
+
   /* ─── Tools Grid ─── */
   .tools-grid {
     display: grid;
@@ -527,6 +565,7 @@
     .stats { grid-template-columns: repeat(2, 1fr); padding: 40px 20px; }
     .problem-grid { grid-template-columns: 1fr; }
     .flow { grid-template-columns: 1fr; }
+    .flow.five { grid-template-columns: 1fr; }
     .tools-grid { grid-template-columns: repeat(2, 1fr); }
     footer { flex-direction: column; gap: 16px; text-align: center; }
   }
@@ -552,6 +591,20 @@
   ::-webkit-scrollbar-track { background: var(--bg); }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+  /* ─── Focus + reduced motion ─── */
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .animate { opacity: 1; animation: none; }
+    .problem-card, .tool-card, .flow-step, .agent-row { opacity: 1 !important; }
+    *, *::before, *::after { transition: none !important; }
+  }
 </style>
 </head>
 <body>
@@ -563,8 +616,11 @@
     <li><a href="#problem">Problem</a></li>
     <li><a href="#solution">Solution</a></li>
     <li><a href="#tools">Tools</a></li>
+    <li><a href="#agents">Agents</a></li>
+    <li><a href="#cli">CLI</a></li>
     <li><a href="#comparison">Compare</a></li>
     <li><a href="#install">Install</a></li>
+    <li><a href="#faq">FAQ</a></li>
   </ul>
   <a href="#install" class="nav-cta">Get Started</a>
 </nav>
@@ -594,6 +650,7 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
     </button>
   </div>
+  <p class="animate delay-4" style="margin-top: 16px; font-size: 14px; color: var(--text-muted);">then run <code style="font-family: var(--font-mono); color: var(--text);">ccm</code> to sign in and set up every agent it finds.</p>
 </section>
 
 <!-- ─── Stats ─── -->
@@ -607,7 +664,7 @@
     <div class="stat-label">Dependencies</div>
   </div>
   <div class="stat">
-    <div class="stat-number" data-target="11">0</div>
+    <div class="stat-number" data-target="15">0</div>
     <div class="stat-label">AI Agents</div>
   </div>
   <div class="stat">
@@ -672,7 +729,7 @@
     <div class="flow-step">
       <div class="number">01</div>
       <h4>Install</h4>
-      <p>npm install -g common-context-mcp, then run common-context-mcp-setup. The wizard detects and configures your AI agents.</p>
+      <p>npm install -g common-context-mcp, then run ccm. Sign in with Google, and the wizard detects and configures your AI agents.</p>
     </div>
     <div class="flow-step">
       <div class="number">02</div>
@@ -694,7 +751,7 @@
   <div class="terminal" style="margin-top: 64px;">
     <div><span class="prompt">$</span> npm install -g common-context-mcp</div>
     <div class="output">  Configured: Claude Code, Cursor, Codex CLI, Gemini CLI, OpenCode, Kilo Code, Cline, Goose, Freebuff, Hermes Agent, Muse, Qwen Code, Zed, Windsurf, Kiro</div>
-    <div class="output">  Created: ./.common-context.json (in your project)</div>
+    <div class="output">  Created: ./common-context.json (in your project)</div>
     <div class="success">  Done. Restart agents to activate.</div>
     <br>
     <div><span class="prompt">[Agent]</span> load_context()</div>
@@ -708,6 +765,39 @@
     <br>
     <div><span class="prompt">[Agent]</span> save_summary(title="Auth module", ...)</div>
     <div class="success">  Session saved. You may now respond.</div>
+  </div>
+
+  <div style="margin-top: 64px;">
+    <div class="section-tag">The Protocol</div>
+    <h2 class="section-title" style="font-size: clamp(28px, 4vw, 48px);">Five steps. Every message. No exceptions.</h2>
+    <p class="section-sub">The server injects these instructions into every connected agent. Hooks enforce them where the agent allows it.</p>
+    <div class="flow five">
+      <div class="flow-step">
+        <div class="number">01</div>
+        <h4>Load first</h4>
+        <p>load_context before any other tool or reply. Starts the session.</p>
+      </div>
+      <div class="flow-step">
+        <div class="number">02</div>
+        <h4>Checkpoint</h4>
+        <p>save_context after every meaningful step. The save point.</p>
+      </div>
+      <div class="flow-step">
+        <div class="number">03</div>
+        <h4>Record failures</h4>
+        <p>save_failure immediately, then search_context before any alternative.</p>
+      </div>
+      <div class="flow-step">
+        <div class="number">04</div>
+        <h4>Claim files</h4>
+        <p>claim_area before editing shared files, release_area after.</p>
+      </div>
+      <div class="flow-step">
+        <div class="number">05</div>
+        <h4>Summarize</h4>
+        <p>save_summary before the final answer. Marks the session complete.</p>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -738,11 +828,69 @@
   </div>
 </section>
 
+<!-- ─── Agents ─── -->
+<section id="agents">
+  <div class="section-tag">15 Agents</div>
+  <h2 class="section-title">One Memory. Every Agent.</h2>
+  <p class="section-sub">The setup wizard detects what's installed and configures the ones you pick. Reruns only touch the managed block; your own settings are never rewritten.</p>
+
+  <div class="agent-list">
+    <div class="agent-row"><div><div class="name">Claude Code</div><div class="Detail">MCP + rules + enforcement hooks</div></div><span class="tag hooks">hooks</span></div>
+    <div class="agent-row"><div><div class="name">Codex CLI</div><div class="Detail">MCP + rules + hooks in config.toml</div></div><span class="tag hooks">hooks</span></div>
+    <div class="agent-row"><div><div class="name">Cursor</div><div class="Detail">MCP + rules + hooks.json</div></div><span class="tag hooks">hooks</span></div>
+    <div class="agent-row"><div><div class="name">Gemini CLI</div><div class="Detail">MCP + rules + hooks in settings</div></div><span class="tag hooks">hooks</span></div>
+    <div class="agent-row"><div><div class="name">Muse</div><div class="Detail">MCP + global skill + enforcement hooks</div></div><span class="tag skill">skill + hooks</span></div>
+    <div class="agent-row"><div><div class="name">OpenCode</div><div class="Detail">MCP + rules + plugin</div></div><span class="tag plugin">plugin</span></div>
+    <div class="agent-row"><div><div class="name">Kilo Code</div><div class="Detail">MCP + protocol in instructions</div></div><span class="tag">rules</span></div>
+    <div class="agent-row"><div><div class="name">Cline</div><div class="Detail">MCP + rules file</div></div><span class="tag">rules</span></div>
+    <div class="agent-row"><div><div class="name">Goose</div><div class="Detail">MCP + hints file</div></div><span class="tag">rules</span></div>
+    <div class="agent-row"><div><div class="name">Freebuff</div><div class="Detail">MCP + shared AGENTS.md</div></div><span class="tag">rules</span></div>
+    <div class="agent-row"><div><div class="name">Hermes Agent</div><div class="Detail">MCP + SOUL.md protocol block</div></div><span class="tag">rules</span></div>
+    <div class="agent-row"><div><div class="name">Qwen Code</div><div class="Detail">MCP + QWEN.md protocol block</div></div><span class="tag">rules</span></div>
+    <div class="agent-row"><div><div class="name">Zed</div><div class="Detail">MCP context server + project rules</div></div><span class="tag">rules</span></div>
+    <div class="agent-row"><div><div class="name">Windsurf</div><div class="Detail">MCP + global rules</div></div><span class="tag">rules</span></div>
+    <div class="agent-row"><div><div class="name">Kiro</div><div class="Detail">MCP + steering file</div></div><span class="tag">rules</span></div>
+  </div>
+  <p style="max-width: 800px; margin: 24px auto 0; font-size: 14px; color: var(--text-muted);">Tools with hooks enforce the protocol as a gate; the rest follow it as model instructions. Aider has no MCP client, so it can't be configured. Remove everything later with <code style="font-family: var(--font-mono); color: var(--text);">common-context-mcp-setup --uninstall</code> — backups are kept.</p>
+</section>
+
+<!-- ─── CLI ─── -->
+<section id="cli">
+  <div class="section-tag">Command Line</div>
+  <h2 class="section-title">Agents Talk MCP. You Talk ccm.</h2>
+  <p class="section-sub">One short command for health and sync. Agents use the protocol above; you only ever need these.</p>
+
+  <div class="terminal">
+    <div><span class="prompt">$</span> ccm login <span class="output">&nbsp;&nbsp;&nbsp;&nbsp;# sign in with Google (opens the browser)</span></div>
+    <div><span class="prompt">$</span> ccm logout <span class="output">&nbsp;&nbsp;# sign out (revokes and removes tokens)</span></div>
+    <div><span class="prompt">$</span> ccm doctor <span class="output">&nbsp;&nbsp;# environment and store health</span></div>
+    <div><span class="prompt">$</span> ccm status <span class="output">&nbsp;&nbsp;# login and sync state</span></div>
+    <div><span class="prompt">$</span> ccm sync <span class="output">&nbsp;&nbsp;&nbsp;&nbsp;# pull remote changes, then push</span></div>
+    <div><span class="prompt">$</span> ccm --upgrade <span class="output"># update package, re-run setup</span></div>
+    <div><span class="prompt">$</span> ccm --local <span class="output">&nbsp;&nbsp;# set up without login (local-only)</span></div>
+  </div>
+
+  <div class="problem-grid" style="margin-top: 48px;">
+    <div class="problem-card">
+      <h3>Login once</h3>
+      <p>First ccm run signs you in and stores the local file to your Drive's hidden app folder. Scope is drive.appdata only — nothing lands in My Drive.</p>
+    </div>
+    <div class="problem-card">
+      <h3>Every write uploads</h3>
+      <p>While logged in, each write syncs in the background and load_context pulls remote changes first, so every machine continues from the cloud copy. Offline writes queue and retry.</p>
+    </div>
+    <div class="problem-card">
+      <h3>Merge, never clobber</h3>
+      <p>Sync is a union merge: per-key latest wins with history kept, sessions union by id, failures and broadcasts unioned. A push never overwrites a remote that changed first.</p>
+    </div>
+  </div>
+</section>
+
 <!-- ─── Comparison ─── -->
 <section id="comparison">
   <div class="section-tag">Comparison</div>
   <h2 class="section-title">Why Not Just Use Existing Tools?</h2>
-  <p class="section-sub">266+ memory MCPs exist. Here's why ours is different.</p>
+  <p class="section-sub">Dozens of memory MCPs exist. Here's why ours is different.</p>
 
   <div class="comparison">
     <table>
@@ -783,13 +931,14 @@
 <section id="install">
   <div class="section-tag">Install</div>
   <h2 class="section-title">Install &amp; Setup</h2>
-  <p class="section-sub">Install globally, then run the setup wizard to auto-detect and configure your AI agents.</p>
+  <p class="section-sub">Install globally, then run ccm: sign in once with Google and the setup wizard auto-detects and configures your AI agents. Prefer local-only? ccm --local skips login entirely.</p>
 
   <div class="terminal">
     <div><span class="prompt">$</span> npm install -g common-context-mcp</div>
-    <div><span class="prompt">$</span> common-context-mcp-setup</div>
+    <div><span class="prompt">$</span> ccm</div>
+    <div class="output">  Sign in with Google opens in your browser… logged in.</div>
     <div class="output">  Detected: Claude Code, Cursor, Codex CLI, Gemini CLI, OpenCode, Kilo Code, Cline, Goose, Freebuff, Hermes Agent, Muse, Qwen Code, Zed, Windsurf, Kiro</div>
-    <div class="output">  Created: ./.common-context.json</div>
+    <div class="output">  Created: ./common-context.json</div>
     <div class="success">  Done. Restart agents to activate.</div>
     <br>
     <div class="output">  # No API keys. No Docker. No database.</div>
@@ -819,7 +968,7 @@
     <div style="text-align: center;">
       <div style="font-size: 32px; margin-bottom: 8px;">📄</div>
       <div style="font-weight: 600; margin-bottom: 4px;">Per-Project JSON File</div>
-      <div style="font-size: 13px; color: var(--text-muted);">.common-context.json</div>
+      <div style="font-size: 13px; color: var(--text-muted);">common-context.json</div>
     </div>
   </div>
 </section>
@@ -959,14 +1108,15 @@
 
 <!-- ─── Footer ─── -->
 <footer>
-  <div>common-context-mcp — Open Source MCP Server</div>
-  <div style="display: flex; gap: 24px;">
-    <a href="#problem">Problem</a>
-    <a href="#solution">Solution</a>
-    <a href="#tools">Tools</a>
-    <a href="#comparison">Compare</a>
+  <div>Built by <a href="https://github.com/Gokulanand-art">Gokulanand</a> · MIT License</div>
+  <div style="display: flex; gap: 24px; flex-wrap: wrap; justify-content: center;">
+    <a href="#agents">Agents</a>
+    <a href="#cli">CLI</a>
     <a href="#install">Install</a>
     <a href="#faq">FAQ</a>
+    <a href="https://www.npmjs.com/package/common-context-mcp" target="_blank" rel="noopener">npm</a>
+    <a href="https://github.com/Gokulanand-art/common-context-mcp" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://glama.ai/mcp/servers/Gokulanand-art/common-context-mcp" target="_blank" rel="noopener">Glama</a>
   </div>
 </footer>
 
@@ -1014,7 +1164,7 @@
     });
   }, { threshold: 0.1 });
 
-  document.querySelectorAll('.problem-card, .tool-card, .flow-step').forEach(el => {
+  document.querySelectorAll('.problem-card, .tool-card, .flow-step, .agent-row').forEach(el => {
     el.style.opacity = '0';
     el.style.transform = 'translateY(20px)';
     el.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
