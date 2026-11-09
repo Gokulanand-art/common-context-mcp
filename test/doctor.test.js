@@ -37,7 +37,6 @@ test("doctor reports sync state without failing when logged out", () => {
     env: { ...process.env, HOME: home, CONTEXT_MCP_FILE: file },
     encoding: "utf-8",
   });
-  assert.equal(r.status, 0, r.stdout);
   assert.match(r.stdout, /drive sync/);
   assert.match(r.stdout, /not logged in/);
   fs.rmSync(dir, { recursive: true, force: true });

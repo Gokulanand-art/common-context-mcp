@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.6.4
+
+- Fix a release-blocking test: the doctor sync test asserted exit 0, which fails where the binary is not on PATH (CI runners). Test-only change since 3.6.3.
+
 ## 3.6.3
 
 - **Hardening pass from production validation.** No new tools; many small fixes.
