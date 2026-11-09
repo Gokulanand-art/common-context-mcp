@@ -5,3 +5,5 @@ dist/
 .DS_Store
 website/
 common-context.json
+common-context.json.sync.json
+*.tgz
