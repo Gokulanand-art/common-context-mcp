@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.6.2
+
+- Fix the 3.6.1 release: drop `registry-url` from the release workflow. It made setup-node export a GitHub token as `NODE_AUTH_TOKEN`, which blocked npm's OIDC exchange (any token env wins over OIDC). No code changes.
+
 ## 3.6.1
 
 - Releases now publish through npm OIDC trusted publishing: no `NPM_TOKEN` secret, no rotation. No code changes since 3.6.0.

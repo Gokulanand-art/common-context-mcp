@@ -13,10 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No registry-url: setup-node would export NODE_AUTH_TOKEN (defaulting to the
+      # GitHub token), and any NODE_AUTH_TOKEN blocks npm's OIDC trusted publishing.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: npm test
       # Trusted publishing (OIDC) needs npm CLI >= 11.5.1; Node 22 ships npm 10
