@@ -36,7 +36,7 @@
     "common-context",
     "common context mcp"
   ],
-  "author": "",
+  "author": "Gokulanand (https://github.com/Gokulanand-art)",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
