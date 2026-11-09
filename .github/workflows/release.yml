@@ -19,6 +19,6 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: npm test
+      # Trusted publishing (OIDC) needs npm CLI >= 11.5.1; Node 22 ships npm 10
+      - run: npm install -g npm@latest
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
