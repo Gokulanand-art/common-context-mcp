@@ -13,9 +13,11 @@
  * the installed binary (see README). Cursor's global User Rules can only be set in
  * its settings UI, so Cursor gets a manual step instead of a file write. Freebuff,
  * Kilo Code, Cline and Goose were checked against their docs and source; Muse,
- * Qwen Code, Zed, Windsurf and Kiro were checked against their docs too. Muse and
- * Zed document no global rules file, so they get a manual step like Cursor. Aider
- * has no MCP client, so it is listed but never written.
+ * Qwen Code, Zed, Windsurf and Kiro were checked against their docs too. Muse has
+ * no global rules file, so it gets a global skill instead (verified against the
+ * installed binary: a file at ~/.agents/skills/common-context/SKILL.md loads with
+ * activation on). Zed documents no global rules file, so it gets a manual step
+ * like Cursor. Aider has no MCP client, so it is listed but never written.
  */
 const fs = require("fs");
 const path = require("path");
@@ -336,6 +338,39 @@ function applyRules(file) {
 
 function writeProtocolFile() {
   return writeIfChanged(PROTOCOL_FILE, readText(PROTOCOL_FILE), `# common-context protocol\n\n${PROTOCOL}\n`);
+}
+
+// ─── Muse: the protocol ships as a global skill ─────────────────────
+// Muse reads user skills from ~/.agents/skills/<id>/SKILL.md with activation on,
+// so the protocol is installed as a skill instead of a rules file. The file is
+// fully owned (frontmatter must stay first, so no managed block is possible):
+// it is written only when missing or already ours, and removed only when ours.
+
+const MUSE_SKILL_MARK = "<!-- common-context-mcp managed skill -->";
+const museSkillFile = () => path.join(os.homedir(), ".agents", "skills", SERVER_KEY, "SKILL.md");
+
+function museSkill() {
+  return `---\nname: ${SERVER_KEY}\ndescription: Shared cross-agent context store (MANDATORY protocol). Every Muse session with the common-context MCP server installed must follow this on every message: load_context or search_context before any other tool call, save_context after each meaningful step, save_failure then search_context on failure, claim_area before editing shared files, and save_context plus save_summary before the final answer.\n---\n\n# common-context\n\n${PROTOCOL}\n${MUSE_SKILL_MARK}\n`;
+}
+
+function applyMuseSkill() {
+  const file = museSkillFile();
+  const before = readText(file);
+  if (before && !before.includes(MUSE_SKILL_MARK)) {
+    throw new Error(`${file} exists and is not managed by common-context; move it aside to install the protocol skill`);
+  }
+  return writeIfChanged(file, before, museSkill());
+}
+
+function removeMuseSkill() {
+  const file = museSkillFile();
+  const text = readText(file);
+  if (!text || !text.includes(MUSE_SKILL_MARK)) return "unchanged";
+  fs.unlinkSync(file);
+  try {
+    fs.rmdirSync(path.dirname(file)); // drops our dir when empty; fails safe otherwise
+  } catch {}
+  return "removed";
 }
 
 // ─── Claude Code enforcement hooks ────────────────────────────────────
@@ -793,8 +828,7 @@ const AGENTS = [
     // each server needs `transport: "stdio"`, and the file needs `"schema_version": 1`.
     // `mode: "optional"` skips us with a warning instead of aborting the run when unavailable.
     mcp: { kind: "json", file: path.join(HOME, ".config", "muse", "settings.json"), key: "mcp_servers", entry: { transport: "stdio", command: COMMAND, args: [], mode: "optional" }, ensure: { schema_version: 1 } },
-    rules: null,
-    manual: `Muse Code documents no global rules file. In each project run \`muse init\`, then paste the contents of ${PROTOCOL_FILE} into its AGENTS.md`,
+    rules: { kind: "skill" },
   },
   {
     id: "qwen",
@@ -871,6 +905,8 @@ function configureAgent(agent, { enableHooks = false } = {}) {
   if (agent.rules && agent.rules.kind === "kilo") {
     const file = agent.rules.file();
     results.push({ label: "protocol rules (instructions)", status: applyKiloInstructions(file), path: file });
+  } else if (agent.rules && agent.rules.kind === "skill") {
+    results.push({ label: "protocol skill", status: applyMuseSkill(), path: museSkillFile() });
   } else if (agent.rules) {
     const file = agent.rules.resolve ? agent.rules.resolve() : agent.rules.file;
     results.push({ label: "protocol rules", status: applyRules(file), path: file });
@@ -923,6 +959,8 @@ function unconfigureAgent(agent) {
   if (agent.rules && agent.rules.kind === "kilo") {
     const file = agent.rules.file();
     results.push({ label: "protocol rules (instructions)", status: applyKiloUninstructions(file), path: file });
+  } else if (agent.rules && agent.rules.kind === "skill") {
+    results.push({ label: "protocol skill", status: removeMuseSkill(), path: museSkillFile() });
   } else if (agent.rules) {
     const file = agent.rules.resolve ? agent.rules.resolve() : agent.rules.file;
     results.push({ label: "protocol rules", status: applyRulesRemove(file), path: file });
@@ -975,4 +1013,8 @@ module.exports = {
   openCodePlugin,
   CURSOR_HOOKS,
   OPENCODE_PLUGIN,
+  museSkill,
+  museSkillFile,
+  applyMuseSkill,
+  removeMuseSkill,
 };

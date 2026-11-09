@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.9.1
+
+- Muse setup is now fully automatic: the protocol installs as a global skill (`~/.agents/skills/common-context/SKILL.md`, activation on) instead of a manual paste step. Verified against the installed `muse` binary (`skills validate` + user-scope listing). The skill file is owned: never overwritten when foreign, removed on uninstall only when ours.
+
 ## 3.9.0
 
 - `ccm` without configured OAuth now prints Google Cloud setup steps (and the new `ccm --local` escape hatch for setup without login) instead of a bare error. The package supports a bundled OAuth client (`src/default-oauth.ts`) for the maintainer to fill in.

@@ -57,7 +57,7 @@ test("registry covers exactly the sixteen listed tools, and Aider is the one tha
   assert.ok(agents.AGENTS.find(a => a.id === "aider").unsupported, "Aider has no MCP client");
   assert.deepEqual(agents.AGENTS.filter(a => a.unsupported).map(a => a.id), ["aider"]);
   assert.equal(agents.AGENTS.find(a => a.id === "cursor").rules, null, "Cursor rules are a manual step");
-  assert.equal(agents.AGENTS.find(a => a.id === "muse").rules, null, "Muse has no documented global rules file");
+  assert.equal(agents.AGENTS.find(a => a.id === "muse").rules.kind, "skill", "Muse gets a global skill, not a rules file");
   assert.equal(agents.AGENTS.find(a => a.id === "zed").rules, null, "Zed rules are per-project");
   assert.deepEqual(agents.AGENTS.filter(a => a.hooks).map(a => a.id).sort(), ["claude-code", "codex", "cursor", "gemini", "opencode"], "all five tools get enforcement");
 });
@@ -393,9 +393,39 @@ test("end to end over a fake home: Muse, Qwen, Zed, Windsurf and Kiro are config
   const kiro = JSON.parse(fs.readFileSync(path.join(dir, ".kiro/settings/mcp.json"), "utf-8"));
   assert.equal(kiro.mcpServers["common-context"].command, "common-context-mcp");
   assert.match(fs.readFileSync(path.join(dir, ".kiro/steering/common-context.md"), "utf-8"), /common-context:start/);
-  assert.match(r.stderr, /Muse\n.*manual step/s);
+  const skill = fs.readFileSync(path.join(dir, ".agents/skills/common-context/SKILL.md"), "utf-8");
+  assert.match(skill, /^---\nname: common-context\n/m, "skill frontmatter first");
+  assert.match(skill, /load_context/);
+  assert.match(skill, /common-context-mcp managed skill/);
+  const museSection = r.stderr.split("  Muse\n")[1].split("\n\n")[0];
+  assert.doesNotMatch(museSection, /manual step/, "Muse is fully automatic now");
+  assert.match(museSection, /protocol skill/);
   assert.match(r.stderr, /Zed\n.*manual step/s);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("Muse skill: owned file lifecycle under a fake HOME", () => {
+  const { dir } = tempStore();
+  const prev = process.env.HOME;
+  process.env.HOME = dir;
+  try {
+    const file = agents.museSkillFile();
+    assert.equal(file, path.join(dir, ".agents", "skills", "common-context", "SKILL.md"));
+    assert.equal(agents.applyMuseSkill(), "updated");
+    assert.equal(agents.applyMuseSkill(), "unchanged", "idempotent");
+    fs.writeFileSync(file, "# someone else's skill\n");
+    assert.throws(() => agents.applyMuseSkill(), /not managed by common-context/);
+    assert.equal(agents.removeMuseSkill(), "unchanged", "foreign file left alone");
+    assert.equal(fs.readFileSync(file, "utf-8"), "# someone else's skill\n");
+    fs.writeFileSync(file, agents.museSkill());
+    assert.equal(agents.removeMuseSkill(), "removed");
+    assert.equal(fs.existsSync(file), false);
+    assert.equal(fs.existsSync(path.dirname(file)), false, "empty skill dir goes too");
+    assert.equal(agents.removeMuseSkill(), "unchanged", "second removal is a no-op");
+  } finally {
+    process.env.HOME = prev;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("JSON MCP merge: ensure fills required top-level keys only when absent", () => {

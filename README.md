@@ -125,7 +125,7 @@ The server sends these instructions to every connected agent. Follow them in ord
 | Goose | `~/.config/goose/config.yaml` (managed block under `extensions:`) | `~/.config/goose/.goosehints` | Rules only |
 | Freebuff | `~/.agents/mcp.json` | `~/.AGENTS.md` | Rules only |
 | Hermes Agent | `$HERMES_HOME/config.yaml` (default `~/.hermes`), managed block under `mcp_servers:` | `$HERMES_HOME/SOUL.md` | Rules only |
-| Muse | `~/.config/muse/settings.json` (under `mcp_servers:`) | Manual paste into the project's `AGENTS.md` | Rules only |
+| Muse | `~/.config/muse/settings.json` (under `mcp_servers:`) | `~/.agents/skills/common-context/SKILL.md` (global skill) | Rules only |
 | Qwen Code | `~/.qwen/settings.json` | `~/.qwen/QWEN.md` | Rules only |
 | Zed | `~/.config/zed/settings.json` (under `context_servers:`) | Manual paste into the project's `.rules` directory | Rules only |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` | `~/.codeium/windsurf/memories/global_rules.md` | Rules only |
