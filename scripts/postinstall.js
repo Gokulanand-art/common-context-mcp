@@ -114,12 +114,42 @@ function configure(selected, enableHooks) {
   if (counts.failed > 0) process.exitCode = 1;
 }
 
+function unconfigure(selected) {
+  const counts = { removed: 0, unchanged: 0, manual: 0, failed: 0 };
+  log("");
+  for (const agent of selected) {
+    log(`  ${agent.name}`);
+    try {
+      for (const r of agents.unconfigureAgent(agent)) {
+        if (r.status === "manual") {
+          counts.manual++;
+          log(`    •  ${r.label}: manual step — ${r.path}`);
+        } else {
+          counts[r.status]++;
+          log(`    ${r.status === "removed" ? "🗑️" : "•"}  ${r.label} (${r.status}) → ${r.path}`);
+        }
+      }
+    } catch (e) {
+      counts.failed++;
+      log(`    ❌ ${e.message}`);
+    }
+    log("");
+  }
+  log(`  Done: ${counts.removed} removed, ${counts.unchanged} already clean, ${counts.manual} manual, ${counts.failed} failed.`);
+  log("  Backups (*.bak-*) and the shared protocol text are left alone; delete them by hand if wanted.");
+  log("  Restart the selected tools to unload the server.");
+  log("");
+  if (counts.failed > 0) process.exitCode = 1;
+}
+
 async function run(argv) {
   if (argv.includes("--help") || argv.includes("-h")) {
-    log(`Usage: common-context-mcp-setup [--yes]
+    log(`Usage: common-context-mcp-setup [--yes] [--uninstall]
   Detects the AI tools installed on this machine (${agents.AGENTS.map(a => a.name).join(", ")}),
   asks which ones to configure, and writes the MCP server and protocol rules for those only.
-  --yes   configure every detected tool without prompting (scripted installs)`);
+  --yes         configure every detected tool without prompting (scripted installs)
+  --uninstall   remove the MCP server, protocol rules and hooks instead of installing them
+                (combine with --yes for every detected tool; backups are kept)`);
     return;
   }
 
@@ -138,10 +168,11 @@ async function run(argv) {
   }
 
   const yes = argv.includes("--yes");
+  const uninstall = argv.includes("--uninstall");
   const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY) && !yes;
 
   log("");
-  log("common-context-mcp — tool setup");
+  log(uninstall ? "common-context-mcp — tool removal" : "common-context-mcp — tool setup");
   log("  Store: common-context.json in each project folder (created on first use)");
   log("");
 
@@ -153,19 +184,30 @@ async function run(argv) {
   printFound(detected);
 
   if (!interactive && !yes) {
-    log("  Not running in a terminal, so nothing was configured.");
-    log("  Next step: run `common-context-mcp-setup` in a terminal to choose tools.");
+    log(`  Not running in a terminal, so nothing was ${uninstall ? "removed" : "configured"}.`);
+    log(`  Next step: run \`common-context-mcp-setup${uninstall ? " --uninstall" : ""}\` in a terminal to choose tools.`);
     log("");
     return;
   }
 
   if (yes) {
-    return configure(detected, !process.env.CONTEXT_MCP_NO_HOOKS);
+    return uninstall ? unconfigure(detected) : configure(detected, !process.env.CONTEXT_MCP_NO_HOOKS);
   }
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await ask(rl, "  Configure which tools? Numbers (e.g. 1,3), 'all', or Enter for none: ");
+  const answer = await ask(rl, uninstall
+    ? "  Remove from which tools? Numbers (e.g. 1,3), 'all', or Enter for none: "
+    : "  Configure which tools? Numbers (e.g. 1,3), 'all', or Enter for none: ");
   const selected = parseSelection(answer, detected);
+  if (uninstall) {
+    rl.close();
+    if (selected.length === 0) {
+      log("  Nothing selected. No changes made.");
+      log("");
+      return;
+    }
+    return unconfigure(selected);
+  }
   let enableHooks = false;
   if (selected.some(a => a.hooks)) {
     const h = await ask(rl, `  Enable enforcement hooks for ${selected.filter(a => a.hooks).map(a => a.name).join(" and ")} (block work until the protocol is followed)? [Y/n]: `);

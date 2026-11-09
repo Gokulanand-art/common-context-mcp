@@ -158,3 +158,38 @@ test("selection parser accepts numbers, all, none and ignores junk", () => {
   assert.deepEqual(parseSelection("3, 1", d), ["c", "a"]);
   assert.deepEqual(parseSelection("1 1 9 x", d), ["a"]);
 });
+
+test("--uninstall removes what setup wrote and keeps user content", () => {
+  const home = fakeHome();
+  const claudeJson = path.join(home, ".claude.json");
+  const claudeMd = path.join(home, ".claude", "CLAUDE.md");
+  fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+  fs.writeFileSync(claudeMd, "# My rules\n\nBe concise.\n");
+  let r = run(home, ["--yes"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(JSON.parse(fs.readFileSync(claudeJson, "utf-8")).mcpServers["common-context"], "installed first");
+  r = run(home, ["--yes", "--uninstall"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /removed/);
+  const cfg = JSON.parse(fs.readFileSync(claudeJson, "utf-8"));
+  assert.equal(cfg.mcpServers["common-context"], undefined, "server entry removed");
+  assert.deepEqual(cfg.mcpServers.rea, { command: "/usr/bin/rea", args: ["mcp"] }, "other servers kept");
+  assert.equal(cfg.numStartups, 7, "unrelated keys kept");
+  assert.equal(fs.readFileSync(claudeMd, "utf-8"), "# My rules\n\nBe concise.\n", "user rules restored");
+  const hooks = JSON.parse(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf-8"));
+  assert.equal(hooks.hooks, undefined, "our hook groups removed");
+  const backups = fs.readdirSync(home).filter(f => f.startsWith(".claude.json.bak-"));
+  assert.ok(backups.length >= 1, "backups left alone");
+  fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("--uninstall leaves a user's own common-context entry in place", () => {
+  const home = fakeHome();
+  const claudeJson = path.join(home, ".claude.json");
+  fs.writeFileSync(claudeJson, JSON.stringify({ mcpServers: { "common-context": { command: "mine" } } }));
+  const r = run(home, ["--yes", "--uninstall"]);
+  assert.equal(r.status, 0, r.stderr);
+  const cfg = JSON.parse(fs.readFileSync(claudeJson, "utf-8"));
+  assert.equal(cfg.mcpServers["common-context"].command, "mine", "custom entry untouched");
+  fs.rmSync(home, { recursive: true, force: true });
+});

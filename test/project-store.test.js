@@ -48,3 +48,22 @@ test("each project folder gets its own store, and hooks write to the folder they
 
   for (const d of [home, a, b]) fs.rmSync(d, { recursive: true, force: true });
 });
+
+test("two spellings of one store resolve to the same file", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ccmcp-real-"));
+  const linkDir = `${dir}-link`;
+  fs.symlinkSync(dir, linkDir);
+  try {
+    const a = loadConfig({ CONTEXT_MCP_FILE: path.join(dir, "s.json") });
+    const b = loadConfig({ CONTEXT_MCP_FILE: path.join(linkDir, "s.json") });
+    assert.equal(a.file, b.file);
+  } finally {
+    fs.unlinkSync(linkDir);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("control characters are stripped from the agent id", () => {
+  assert.equal(loadConfig({ CONTEXT_MCP_AGENT_ID: "a\nb\x00c" }).agentId, "abc");
+  assert.match(loadConfig({}).agentId, /^agent-/);
+});

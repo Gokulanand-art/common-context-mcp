@@ -364,3 +364,56 @@ test("end to end over a fake home: Hermes gets its server in config.yaml and the
   assert.match(soul, /You are Hermes\.\n$/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+test("uninstall: JSON entries we wrote are removed, custom ones are kept", () => {
+  const ours = { mcpServers: { "common-context": { command: "common-context-mcp" }, other: { command: "x" } } };
+  const r1 = agents.removeJsonServer(ours, "mcpServers");
+  assert.equal(r1.removed, true);
+  assert.deepEqual(r1.config, { mcpServers: { other: { command: "x" } } });
+  assert.deepEqual(ours.mcpServers["common-context"], { command: "common-context-mcp" }, "input untouched");
+  const custom = { mcpServers: { "common-context": { command: "mine" } } };
+  const r2 = agents.removeJsonServer(custom, "mcpServers");
+  assert.equal(r2.removed, false);
+  assert.equal(r2.custom, true);
+  assert.deepEqual(agents.removeJsonServer({ mcpServers: {} }, "mcpServers").removed, false);
+});
+
+test("uninstall: TOML/YAML/markdown round-trip to the original text", () => {
+  const toml = '[model]\nname = "x"\n';
+  assert.equal(agents.withoutTomlServer(agents.withTomlServer(toml)).trim(), toml.trim());
+  const withState = agents.withTomlServer(toml).replace("# common-context:end", "[hooks.state.x]\ntrusted_hash = 1\n# common-context:end");
+  assert.match(agents.withoutTomlServer(withState), /trusted_hash/, "hook approvals survive uninstall");
+  const yaml = "model:\n  default: x\n";
+  assert.equal(agents.withoutYamlServer(agents.withGooseServer(yaml), "extensions").trim(), yaml.trim());
+  const md = "# My rules\n\nBe concise.\n";
+  assert.equal(agents.withoutMarkdownBlock(agents.upsertMarkdown(md)).trim(), md.trim());
+  assert.equal(agents.withoutMarkdownBlock("nothing here\n"), "nothing here\n");
+});
+
+test("uninstall: YAML keeps a header that still has user content", () => {
+  const out = agents.withoutYamlServer("extensions:\n  other: 1\n# common-context:start\n  common-context:\n# common-context:end\n", "extensions");
+  assert.match(out, /extensions:/);
+  assert.match(out, /other: 1/);
+  assert.doesNotMatch(out, /common-context/);
+});
+
+test("uninstall: hook entries and kilo instructions are dropped, empties go with them", () => {
+  const hooked = agents.withCursorHooks({});
+  const cleaned = agents.withoutJsonHooks(hooked, { beforeSubmitPrompt: 1, preToolUse: 1, postToolUse: 1, postToolUseFailure: 1, stop: 1 });
+  assert.deepEqual(cleaned, { version: 1 }, "only the untouched version key remains");
+  const kilo = agents.withInstruction({ other: 1 }, "/p/PROTOCOL.md");
+  assert.deepEqual(agents.withoutInstruction(kilo, "/p/PROTOCOL.md"), { other: 1 });
+  const kept = agents.withoutJsonHooks({ hooks: { stop: [{ command: "mine" }] } }, { stop: 1 });
+  assert.deepEqual(kept, { hooks: { stop: [{ command: "mine" }] } }, "user hooks survive");
+});
+
+test("uninstall: only the newest ten backups are kept", () => {
+  const dir = fs.mkdtempSync(path.join(require("os").tmpdir(), "ccmcp-bak-"));
+  const file = path.join(dir, "settings.json");
+  fs.writeFileSync(file, "{}");
+  for (let i = 0; i < 13; i++) fs.writeFileSync(`${file}.bak-2026-01-01T00-00-${String(i).padStart(2, "0")}`, "{}");
+  agents.pruneBackups(file);
+  const left = fs.readdirSync(dir).filter(f => f.includes(".bak-"));
+  assert.equal(left.length, 10);
+  assert.ok(!left.some(f => f.endsWith("-00") || f.endsWith("-01") || f.endsWith("-02")), "oldest pruned");
+  fs.rmSync(dir, { recursive: true, force: true });
+});

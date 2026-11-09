@@ -29,3 +29,17 @@ test("doctor exits 1 when the store cannot be read safely", () => {
   assert.match(r.stdout, /FAIL  store readable and lockable/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("doctor reports sync state without failing when logged out", () => {
+  const { dir, file } = tempStore();
+  const home = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "ccmcp-doc-"));
+  const r = spawnSync(process.execPath, [path.join(__dirname, "..", "dist", "index.js"), "doctor"], {
+    env: { ...process.env, HOME: home, CONTEXT_MCP_FILE: file },
+    encoding: "utf-8",
+  });
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /drive sync/);
+  assert.match(r.stdout, /not logged in/);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(home, { recursive: true, force: true });
+});

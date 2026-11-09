@@ -46,7 +46,7 @@ npm install -g common-context-mcp
 common-context-mcp-setup
 ```
 
-The setup step detects your AI tools (Claude Code, Codex, Cursor, Gemini, OpenCode, Kilo Code, Cline, Goose, Freebuff, Hermes Agent) and wires up the MCP server + protocol block for each one you pick.
+The setup step detects your AI tools (Claude Code, Codex, Cursor, Gemini, OpenCode, Kilo Code, Cline, Goose, Freebuff, Hermes Agent) and wires up the MCP server + protocol block for each one you pick. To remove everything again later: `common-context-mcp-setup --uninstall` (backups are kept).
 
 ### 2. Use it in any project
 
@@ -176,7 +176,8 @@ common-context-mcp logout
 ```
 
 - Scope is `drive.appdata` only (a hidden app folder; counts toward your 15 GB, nothing lands in My Drive).
-- Local file stays primary and works offline. `load_context` pulls and merges remote changes; writes push back (debounced ~500 ms).
+- Local file stays primary and works offline. `load_context` pulls and merges remote changes; writes push back (debounced ~500 ms). A push that fails (e.g. offline) is retried quietly by the running server about once a minute.
+- Hook-only writes (failure records) piggyback on the next server push rather than pushing themselves.
 - Each project gets its own remote file (`common-context--<project>.json`), so projects never overwrite each other. The identity is `CONTEXT_MCP_SYNC_ID` when set, else the git origin URL, else a hash of the folder. If you check out the same non-git project at different paths on different machines, set `CONTEXT_MCP_SYNC_ID` to the same value on all of them.
 - Sync state lives in `<store>.sync.json` next to the store (last remote version seen, last push hash). It is advisory: deleting it just causes one redundant sync.
 - Conflict strategy: union merge, nothing is deleted. Contexts resolve per key by latest `updated` (the losing value is kept in history); sessions union by id (a completed session is never resurrected by a stale copy; an id collision between different sessions keeps both); failures, broadcasts and patterns are unioned.
@@ -207,7 +208,7 @@ Two extra MCP tools: `sync_status` (read-only) and `sync_now`.
 common-context-mcp doctor
 ```
 
-Checks Node version, binary on PATH, store writability, read/lock capability, interrupted sessions, and agent registration. Exits non-zero if anything's broken.
+Checks Node version, binary on PATH, store writability, read/lock capability, interrupted sessions, and agent registration. Exits non-zero if anything's broken. Also reports Google sync state (login freshness, remote reachability) as advisory warnings that never fail.
 
 ```bash
 common-context-mcp doctor --tokens

@@ -1,6 +1,7 @@
 import { log } from "./log.js";
 import * as fs from "node:fs";
 import { schedulePush } from "./google.js";
+import { pruneSiblings, sweepStaleTmp } from "./fsutil.js";
 import * as path from "node:path";
 import type { Config } from "./config.js";
 
@@ -110,6 +111,14 @@ function normalize(raw: unknown): ContextData {
     c.tags = arr<string>(c.tags);
     c.history = arr<HistoryEntry>(c.history);
   }
+  const claims = obj<ClaimEntry>(r.claims);
+  // Defense in depth: `obj["__proto__"]` reads Object.prototype instead of a stored entry,
+  // which crashes merges and handlers. Reserved keys are rejected at write time; anything
+  // already in a file (hand edits, older remotes) is dropped here so it can never poison us.
+  for (const k of RESERVED_KEYS) {
+    delete contexts[k];
+    delete claims[k];
+  }
 
   const sessions = arr<SessionEntry>(r.sessions);
   for (const s of sessions) {
@@ -123,7 +132,7 @@ function normalize(raw: unknown): ContextData {
     contexts,
     sessions,
     failures: arr<FailureEntry>(r.failures),
-    claims: obj<ClaimEntry>(r.claims),
+    claims,
     broadcasts: arr<BroadcastEntry>(r.broadcasts),
     patterns: {
       works: arr<string>(r.patterns?.works),
@@ -142,6 +151,32 @@ function timeMs(iso: string | undefined): number {
 }
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
+/**
+ * Keys that must never address a context entry or claim. Property access `o["__proto__"]`
+ * returns Object.prototype (and `"constructor"` the Object constructor), so using them as ids
+ * corrupts reads, crashes history handling, and silently loses the entry on save.
+ */
+const RESERVED_KEYS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
+
+/** True when `key` must not be used as a context key or claim area. */
+export function isReservedKey(key: string): boolean {
+  return RESERVED_KEYS.has(key);
+}
+
+/** Most history entries kept per context key; older ones fall off. */
+export const HISTORY_KEEP = 50;
+
+/** Appends nothing; just enforces HISTORY_KEEP so volatile keys cannot bloat the store. */
+export function capHistory(hist: HistoryEntry[]): HistoryEntry[] {
+  return hist.length > HISTORY_KEEP ? hist.slice(hist.length - HISTORY_KEEP) : hist;
+}
+
+/** Stable identity of a failure/broadcast record. Shared by merge dedupe and archive tombstones. */
+export const failureIdentity = (f: FailureEntry): string =>
+  JSON.stringify([f.approach, f.why_failed, f.agent, f.timestamp]);
+export const broadcastIdentity = (b: BroadcastEntry): string =>
+  JSON.stringify([b.message, b.agent, b.timestamp]);
 
 /** Canonical form: key order no longer matters, so fingerprints compare by content alone. */
 function canonical(v: unknown): unknown {
@@ -234,7 +269,7 @@ export function mergeData(local: ContextData, remote: unknown): ContextData {
       tags: [...new Set([...x.tags, ...y.tags])],
       agent: win.agent,
       updated: win.updated,
-      history,
+      history: capHistory(history),
     };
   }
 
@@ -270,14 +305,8 @@ export function mergeData(local: ContextData, remote: unknown): ContextData {
   }
 
   const byTime = (x: { timestamp: string }, y: { timestamp: string }) => timeMs(x.timestamp) - timeMs(y.timestamp);
-  const failures = unionBy(
-    [...a.failures, ...b.failures],
-    f => JSON.stringify([f.approach, f.why_failed, f.agent, f.timestamp])
-  ).sort(byTime);
-  const broadcasts = unionBy(
-    [...a.broadcasts, ...b.broadcasts],
-    m => JSON.stringify([m.message, m.agent, m.timestamp])
-  ).sort(byTime);
+  const failures = unionBy([...a.failures, ...b.failures], failureIdentity).sort(byTime);
+  const broadcasts = unionBy([...a.broadcasts, ...b.broadcasts], broadcastIdentity).sort(byTime);
 
   const claims: Record<string, ClaimEntry> = {};
   for (const area of new Set([...Object.keys(a.claims), ...Object.keys(b.claims)])) {
@@ -349,13 +378,17 @@ export class ContextStore {
   /**
    * Merges remotely-synced data into the store under the cross-process lock. Union by
    * id/key: remote entries are added, conflicts resolve deterministically, local entries
-   * are never deleted. Returns true when the store changed. Throws StoreError when the
-   * remote data is unreadable or from a newer schema, leaving the store untouched.
+   * are never deleted. Items already moved to this machine's archive file stay archived:
+   * a stale copy from another machine must not resurrect them (a copy that changed since
+   * — e.g. someone resumed the session — is kept). Returns true when the store changed.
+   * Throws StoreError when the remote data is unreadable or from a newer schema, leaving
+   * the store untouched.
    */
   mergeRemote(remote: unknown): boolean {
     let changed = false;
     this.write(d => {
       const merged = mergeData(d, remote);
+      dropArchived(this.cfg.file, merged);
       if (fingerprint(d) !== fingerprint(merged)) {
         for (const k of Object.keys(d)) delete (d as unknown as Record<string, unknown>)[k];
         Object.assign(d, merged);
@@ -420,6 +453,7 @@ export class ContextStore {
       if (e instanceof StoreError) throw e;
       const backup = `${this.cfg.file}.corrupt-${Date.now()}`;
       fs.copyFileSync(this.cfg.file, backup);
+      pruneSiblings(this.cfg.file, "corrupt", 5);
       log.warn(`store was unreadable (${(e as Error).message}); copied to ${backup} and starting fresh`);
       return emptyData();
     }
@@ -427,6 +461,7 @@ export class ContextStore {
 
   private save(data: ContextData): void {
     fs.mkdirSync(path.dirname(this.cfg.file), { recursive: true });
+    sweepStaleTmp(this.cfg.file);
     const tmp = `${this.cfg.file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", { encoding: "utf-8", mode: 0o600 });
     fs.renameSync(tmp, this.cfg.file);
@@ -475,17 +510,20 @@ export class ContextStore {
 }
 
 const FAILURE_KEEP = 200;
+const BROADCAST_KEEP = 200;
+/** Most archive bytes scanned for tombstones and reads; older lines are beyond recall. */
+const ARCHIVE_SCAN_BYTES = 2 * 1024 * 1024;
 
 /**
  * Moves old items out of the live store so it stays small. Completed sessions beyond the newest
- * `keepSessions`, or older than `days`, and failures beyond the newest FAILURE_KEEP are removed from
- * `d` and returned. Nothing is lost: the caller appends them to the archive file. The current session
- * and any session still open are never moved.
+ * `keepSessions`, or older than `days`, failures beyond the newest FAILURE_KEEP, and broadcasts
+ * beyond the newest BROADCAST_KEEP are removed from `d` and returned. Nothing is lost: the caller
+ * appends them to the archive file. The current session and any session still open are never moved.
  */
 export function splitArchive(
   d: ContextData,
   opts: { keepSessions: number; days: number; keepId: string | null; now: number }
-): { sessions: SessionEntry[]; failures: FailureEntry[] } {
+): { sessions: SessionEntry[]; failures: FailureEntry[]; broadcasts: BroadcastEntry[] } {
   const cutoff = opts.now - opts.days * 86_400_000;
   const completed = d.sessions.filter(s => s.status === "completed" && s.id !== opts.keepId);
   const newest = new Set(completed.slice(-opts.keepSessions).map(s => s.id));
@@ -496,16 +534,137 @@ export function splitArchive(
 
   const failures = d.failures.length > FAILURE_KEEP ? d.failures.slice(0, d.failures.length - FAILURE_KEEP) : [];
   d.failures = d.failures.slice(d.failures.length - Math.min(d.failures.length, FAILURE_KEEP));
-  return { sessions, failures };
+
+  const broadcasts =
+    d.broadcasts.length > BROADCAST_KEEP ? d.broadcasts.slice(0, d.broadcasts.length - BROADCAST_KEEP) : [];
+  d.broadcasts = d.broadcasts.slice(d.broadcasts.length - Math.min(d.broadcasts.length, BROADCAST_KEEP));
+
+  return { sessions, failures, broadcasts };
 }
 
-/** Appends archived items to the archive file, one JSON object per line. Called under the store lock. */
-export function appendArchive(storeFile: string, sessions: SessionEntry[], failures: FailureEntry[]): void {
-  if (sessions.length === 0 && failures.length === 0) return;
+/** Last lines of a file without reading all of it. Tolerant: missing/unreadable files give []. */
+function readTailLines(file: string, maxBytes: number): string[] {
+  try {
+    const fd = fs.openSync(file, "r");
+    try {
+      const size = fs.fstatSync(fd).size;
+      const start = Math.max(0, size - maxBytes);
+      const buf = Buffer.alloc(size - start);
+      fs.readSync(fd, buf, 0, buf.length, start);
+      const lines = buf.toString("utf-8").split("\n");
+      if (start > 0) lines.shift(); // first line is a fragment
+      return lines;
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return [];
+  }
+}
+
+interface ArchiveSnapshots {
+  /** Archived session id -> fingerprint of the archived copy. */
+  sessions: Map<string, string>;
+  /** Identities of archived failures and broadcasts. */
+  failures: Set<string>;
+  broadcasts: Set<string>;
+}
+
+/**
+ * Tombstones for union merge: what this machine already archived. A remote copy identical to
+ * an archived snapshot is stale and must not come back; a copy that changed since (resumed,
+ * edited) is genuinely alive and is kept. Corrupt lines are skipped. Only the newest
+ * ARCHIVE_SCAN_BYTES are consulted.
+ */
+export function readArchiveSnapshots(storeFile: string): ArchiveSnapshots {
+  const out: ArchiveSnapshots = { sessions: new Map(), failures: new Set(), broadcasts: new Set() };
+  for (const line of readTailLines(`${storeFile}.archive.jsonl`, ARCHIVE_SCAN_BYTES)) {
+    if (!line.trim()) continue;
+    let row: any;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!row || typeof row !== "object" || !row.item) continue;
+    if (row.kind === "session" && typeof row.item.id === "string") {
+      out.sessions.set(row.item.id, JSON.stringify(canonical(row.item)));
+    } else if (row.kind === "failure") {
+      try {
+        out.failures.add(failureIdentity(row.item as FailureEntry));
+      } catch {}
+    } else if (row.kind === "broadcast") {
+      try {
+        out.broadcasts.add(broadcastIdentity(row.item as BroadcastEntry));
+      } catch {}
+    }
+  }
+  return out;
+}
+
+/** Removes merged items that are stale copies of this machine's archived snapshots. Mutates `d`. */
+export function dropArchived(storeFile: string, d: ContextData): void {
+  const tombs = readArchiveSnapshots(storeFile);
+  if (tombs.sessions.size === 0 && tombs.failures.size === 0 && tombs.broadcasts.size === 0) return;
+  d.sessions = d.sessions.filter(s => tombs.sessions.get(s.id) !== JSON.stringify(canonical(s)));
+  d.failures = d.failures.filter(f => !tombs.failures.has(failureIdentity(f)));
+  d.broadcasts = d.broadcasts.filter(b => !tombs.broadcasts.has(broadcastIdentity(b)));
+}
+
+/**
+ * Appends archived items to the archive file, one JSON object per line. Called under the store
+ * lock. Items already archived with identical content are skipped, so a resurrected-then-
+ * rearchived session does not pile up duplicate lines.
+ */
+export function appendArchive(
+  storeFile: string,
+  sessions: SessionEntry[],
+  failures: FailureEntry[],
+  broadcasts: BroadcastEntry[] = []
+): void {
+  if (sessions.length === 0 && failures.length === 0 && broadcasts.length === 0) return;
+  const tombs = readArchiveSnapshots(storeFile);
+  const freshSessions = sessions.filter(s => tombs.sessions.get(s.id) !== JSON.stringify(canonical(s)));
+  const freshFailures = failures.filter(f => !tombs.failures.has(failureIdentity(f)));
+  const freshBroadcasts = broadcasts.filter(b => !tombs.broadcasts.has(broadcastIdentity(b)));
+  if (freshSessions.length === 0 && freshFailures.length === 0 && freshBroadcasts.length === 0) return;
   const file = `${storeFile}.archive.jsonl`;
+  const at = new Date().toISOString();
   const lines = [
-    ...sessions.map(s => JSON.stringify({ kind: "session", archived: new Date().toISOString(), item: s })),
-    ...failures.map(f => JSON.stringify({ kind: "failure", archived: new Date().toISOString(), item: f })),
+    ...freshSessions.map(s => JSON.stringify({ kind: "session", archived: at, item: s })),
+    ...freshFailures.map(f => JSON.stringify({ kind: "failure", archived: at, item: f })),
+    ...freshBroadcasts.map(b => JSON.stringify({ kind: "broadcast", archived: at, item: b })),
   ];
   fs.appendFileSync(file, lines.join("\n") + "\n", { mode: 0o600 });
+}
+
+export interface ArchiveEntries {
+  sessions: SessionEntry[];
+  failures: FailureEntry[];
+  broadcasts: BroadcastEntry[];
+}
+
+/**
+ * Newest archived items, newest first, capped per kind. Tolerant of corrupt lines and of a
+ * missing file. Powers archive search and the audit trail so archived knowledge stays reachable.
+ */
+export function readArchiveEntries(storeFile: string, keep = 200): ArchiveEntries {
+  const out: ArchiveEntries = { sessions: [], failures: [], broadcasts: [] };
+  const lines = readTailLines(`${storeFile}.archive.jsonl`, ARCHIVE_SCAN_BYTES);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (out.sessions.length >= keep && out.failures.length >= keep && out.broadcasts.length >= keep) break;
+    const line = lines[i].trim();
+    if (!line) continue;
+    let row: any;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!row || typeof row !== "object" || !row.item) continue;
+    if (row.kind === "session" && out.sessions.length < keep) out.sessions.push(row.item as SessionEntry);
+    else if (row.kind === "failure" && out.failures.length < keep) out.failures.push(row.item as FailureEntry);
+    else if (row.kind === "broadcast" && out.broadcasts.length < keep) out.broadcasts.push(row.item as BroadcastEntry);
+  }
+  return out;
 }

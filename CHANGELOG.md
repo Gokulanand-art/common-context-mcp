@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.6.3
+
+- **Hardening pass from production validation.** No new tools; many small fixes.
+- Fixed: `__proto__`/`constructor` keys crashed tools and could wedge sync. They are rejected at write time and stripped on load/merge.
+- Fixed: every Drive/OAuth request now carries a 20s timeout, so a stalled network degrades to local-first instead of hanging tools.
+- Fixed: `login` crashed on machines without a browser opener (headless Linux, Windows); it now falls back to printing the URL.
+- Sync: token refresh is serialized across processes; 401/403 responses refresh-and-retry once; same-named duplicate remotes resolve newest-first; custom-named store files get their own remote (default names unchanged); failed pushes retry about once a minute in the server; `sync_status` lists sibling remotes and flags the legacy 3.4/3.5 file.
+- Archive: `search_context` and `get_audit_trail` now include archived items (as documented); archived items no longer resurrect through sync; archive appends dedupe; broadcasts archive past 200; context history capped at 50.
+- Setup: new `common-context-mcp-setup --uninstall` removes the server, rules and hooks per tool; installer backups capped at ten per file.
+- `doctor` reports sync state (advisory, never fails); OAuth login uses a `state` check; redaction covers private keys and fine-grained tokens; roots backoff for stalled clients; week-old hook state, stale tmp files and old backups are swept.
+- CI now tests Node 24.
+
 ## 3.6.2
 
 - Fix the 3.6.1 release: drop `registry-url` from the release workflow. It made setup-node export a GitHub token as `NODE_AUTH_TOKEN`, which blocked npm's OIDC exchange (any token env wins over OIDC). No code changes.

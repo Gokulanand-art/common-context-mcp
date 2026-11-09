@@ -225,3 +225,74 @@ test("save_summary accepts title and accomplished alone, so a missing field neve
   await c.close();
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("reserved keys are rejected, not crashed on", async () => {
+  const { dir, file } = tempStore();
+  const c = await connect(file, "a");
+  await call(c, "load_context");
+  for (const key of ["__proto__", "constructor"]) {
+    const r = await call(c, "save_context", { key, value: "v" });
+    assert.equal(r.isError, true, `save_context ${key} must fail cleanly`);
+    assert.match(r.text, /reserved/);
+  }
+  const r = await call(c, "claim_area", { area: "__proto__" });
+  assert.equal(r.isError, true);
+  assert.match(r.text, /reserved/);
+  const data = JSON.parse(fs.readFileSync(file, "utf-8"));
+  assert.deepEqual(Object.keys(data.contexts), []);
+  assert.deepEqual(Object.keys(data.claims), []);
+  await c.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("broadcasts and handoffs are redacted and capped like saves", async () => {
+  const { dir, file } = tempStore();
+  const c = await connect(file, "a");
+  await call(c, "load_context");
+  const secret = "api_key=supersecretvalue";
+  await call(c, "broadcast", { message: `note ${secret} ${"x".repeat(10000)}` });
+  await call(c, "handoff", { to_agent: "b", summary: "handoff here", context: `ctx ${secret} ${"y".repeat(10000)}` });
+  const data = JSON.parse(fs.readFileSync(file, "utf-8"));
+  const b = data.broadcasts.find(x => x.message.startsWith("note "));
+  assert.ok(b.message.length <= 4000, `broadcast capped, got ${b.message.length}`);
+  assert.ok(!b.message.includes("supersecretvalue"), "broadcast redacted");
+  const h = data.sessions.find(x => x.id.startsWith("handoff-"));
+  assert.ok(h.accomplished.length <= 4000, `handoff context capped, got ${h.accomplished.length}`);
+  assert.ok(!h.accomplished.includes("supersecretvalue"), "handoff redacted");
+  await c.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("audit trail shows claims, broadcasts and archived items", async () => {
+  const { dir, file } = tempStore();
+  const c = await connect(file, "a");
+  await call(c, "load_context");
+  await call(c, "claim_area", { area: "auth.ts" });
+  await call(c, "broadcast", { message: "standup notes" });
+  fs.writeFileSync(`${file}.archive.jsonl`, JSON.stringify({ kind: "session", archived: "t", item: { id: "session-7", title: "Old work", status: "completed", agent: "z" } }) + "\n");
+  const r = await call(c, "get_audit_trail");
+  assert.match(r.text, /ACTIVE CLAIMS/);
+  assert.match(r.text, /auth\.ts → a/);
+  assert.match(r.text, /BROADCASTS/);
+  assert.match(r.text, /standup notes/);
+  assert.match(r.text, /ARCHIVED/);
+  assert.match(r.text, /session-7/);
+  await c.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("search_context finds archived sessions, failures and broadcasts", async () => {
+  const { dir, file } = tempStore();
+  const c = await connect(file, "a");
+  fs.writeFileSync(`${file}.archive.jsonl`, [
+    { kind: "session", archived: "t", item: { id: "session-3", title: "Payments overhaul", status: "completed", accomplished: "migrated zebrastripe billing", learned: "", decisions: "", next_steps: "", checkpoint: "" } },
+    { kind: "failure", archived: "t", item: { approach: "zebrastripe sandbox", why_failed: "nope", agent: "a", timestamp: "t" } },
+    { kind: "broadcast", archived: "t", item: { message: "zebrastripe freeze Friday", agent: "a", timestamp: "t" } },
+  ].map(o => JSON.stringify(o)).join("\n") + "\n");
+  const r = await call(c, "search_context", { query: "zebrastripe" });
+  assert.match(r.text, /archived-session:session-3/);
+  assert.match(r.text, /archived-failure/);
+  assert.match(r.text, /archived-broadcast/);
+  await c.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});

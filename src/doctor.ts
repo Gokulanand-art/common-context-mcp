@@ -6,6 +6,7 @@ import { loadConfig } from "./config.js";
 import { ContextStore } from "./store.js";
 import { VERSION, INSTRUCTIONS } from "./server.js";
 import { renderLoad } from "./render.js";
+import { findDriveFile, isLoggedIn, loadSyncState, loadTokens, remoteNameFor } from "./google.js";
 // The installer lives beside the package root, outside src; it is shipped in the package.
 const agents: { upsertMarkdown(text: string): string } = require("../scripts/agents.js");
 
@@ -13,7 +14,7 @@ const agents: { upsertMarkdown(text: string): string } = require("../scripts/age
 type Check = { name: string; ok: boolean; warn?: boolean; detail: string };
 
 /** Verifies the environment an agent will run in. Exits non-zero if anything is broken. */
-export function runDoctor(): number {
+export async function runDoctor(): Promise<number> {
   const config = loadConfig();
   const checks: Check[] = [];
 
@@ -65,6 +66,39 @@ export function runDoctor(): number {
       }
     });
   checks.push({ name: "registered with an agent", ok: registered.length > 0, warn: true, detail: registered.length ? registered.join(", ") : "none found; run common-context-mcp-setup" });
+
+  // Sync checks are advisory: sync is optional and network-dependent, so they never fail.
+  if (!isLoggedIn()) {
+    checks.push({ name: "drive sync", ok: true, warn: true, detail: "not logged in (optional); run common-context-mcp login to enable" });
+  } else {
+    const tokens = loadTokens();
+    const expired = !(tokens && tokens.expiry_date > Date.now());
+    checks.push({
+      name: "drive login fresh",
+      ok: !expired || !!tokens?.refresh_token,
+      warn: true,
+      detail: !expired
+        ? `token valid until ${new Date(tokens!.expiry_date).toISOString()}`
+        : tokens?.refresh_token
+          ? "access token expired; will refresh on next sync"
+          : "access token expired with no refresh token; run common-context-mcp login again",
+    });
+    try {
+      const remote = remoteNameFor(config.file);
+      const found = await findDriveFile(remote);
+      const st = loadSyncState(config.file);
+      checks.push({
+        name: "drive remote reachable",
+        ok: true,
+        warn: true,
+        detail: found
+          ? `${remote} (modified ${found.modifiedTime}; last pull ${st.lastPull ?? "never"}, last push ${st.lastPush ?? "never"})`
+          : `${remote} not on Drive yet; next push creates it`,
+      });
+    } catch (e) {
+      checks.push({ name: "drive remote reachable", ok: true, warn: true, detail: `unreachable: ${(e as Error).message}` });
+    }
+  }
 
   const lines = [`common-context-mcp ${VERSION} doctor`, ""];
   for (const c of checks) {

@@ -226,3 +226,17 @@ test("OpenCode wrapped load_context unblocks the gate end to end", () => {
   assert.equal(hook("PreToolUse", { session_id: "oc-wrap", tool_name: "Bash", tool_input: {} }).hookSpecificOutput, undefined, "work is allowed after load");
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("week-old hook state files are swept on write", () => {
+  const { dir, hook } = setup();
+  const stateDir = path.join(dir, ".claude", "state", "common-context");
+  fs.mkdirSync(stateDir, { recursive: true });
+  const stale = path.join(stateDir, "ancient.json");
+  fs.writeFileSync(stale, "{}");
+  const old = new Date(Date.now() - 8 * 86400_000);
+  fs.utimesSync(stale, old, old);
+  hook("UserPromptSubmit", { prompt: "hi" });
+  assert.equal(fs.existsSync(stale), false, "stale state removed");
+  assert.ok(fs.existsSync(path.join(stateDir, `${SID}.json`)), "current state kept");
+  fs.rmSync(dir, { recursive: true, force: true });
+});

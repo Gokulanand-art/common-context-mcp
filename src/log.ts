@@ -19,7 +19,8 @@ function emit(at: Level, msg: string, fields?: Record<string, unknown>): void {
   if (json) {
     process.stderr.write(JSON.stringify({ time: new Date().toISOString(), level: at, msg, ...fields }) + "\n");
   } else {
-    process.stderr.write(`[common-context] ${msg}\n`);
+    // One line per record: agent-supplied text must not forge extra log lines.
+    process.stderr.write(`[common-context] ${msg.replace(/[\r\n]+/g, " ")}\n`);
   }
 }
 

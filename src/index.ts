@@ -74,7 +74,13 @@ if (arg === "doctor" && process.argv.includes("--tokens")) {
   process.exit(runTokenReport());
 }
 if (arg === "doctor") {
-  process.exit(runDoctor());
+  runDoctor().then(
+    code => process.exit(code),
+    e => {
+      console.error(e instanceof Error ? e.message : String(e));
+      process.exit(1);
+    }
+  );
 }
 if (arg === "--help" || arg === "-h") {
   process.stdout.write(HELP);

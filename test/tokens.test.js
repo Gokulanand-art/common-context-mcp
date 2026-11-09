@@ -125,6 +125,14 @@ test("credentials are redacted from what the store keeps", () => {
   assert.doesNotMatch(out, /abc123def456ghi789|abc\.def\.ghi|sk-abcdefghijklmnop/);
 });
 
+test("redact covers fine-grained tokens and private keys", () => {
+  assert.doesNotMatch(redact("key github_pat_abcdefghijklmnop1234 here"), /abcdefghijklmnop/);
+  assert.doesNotMatch(redact("key glpat-abcdefghijklmnop12 here"), /abcdefghijklmnop/);
+  const pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAAB3NzaC1yc2EAAAAK\n-----END OPENSSH PRIVATE KEY-----";
+  assert.equal(redact(`cert:\n${pem}\ndone`), "cert:\n[REDACTED PRIVATE KEY]\ndone");
+  assert.equal(redact("nothing secret here"), "nothing secret here");
+});
+
 test("save_context stores redacted, capped text through the server", async () => {
   const { dir, file } = tempStore();
   const env = { ...process.env, CONTEXT_MCP_FILE: file };

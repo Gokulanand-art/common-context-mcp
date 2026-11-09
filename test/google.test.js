@@ -145,7 +145,7 @@ test("remoteNameFor: git origin gives a stable cross-machine name", () => {
     );
     const sub = path.join(proj, "packages", "app");
     fs.mkdirSync(sub, { recursive: true });
-    assert.equal(g.remoteNameFor(path.join(sub, "store.json")), "common-context--github-com-acme-widgets.json");
+    assert.equal(g.remoteNameFor(path.join(sub, "common-context.json")), "common-context--github-com-acme-widgets.json");
   } finally {
     fs.rmSync(proj, { recursive: true, force: true });
   }
@@ -348,6 +348,217 @@ test("syncStatus reports the project's remote and last sync times", async () => 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("remoteNameFor: custom store filenames get their own suffix", () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "ccmcp-n-"));
+  try {
+    const plain = g.remoteNameFor(path.join(d, "common-context.json"));
+    const custom = g.remoteNameFor(path.join(d, "custom.json"));
+    assert.notEqual(plain, custom, "two files in one folder must not share a remote");
+    assert.match(custom, /custom/);
+    assert.match(plain, /^common-context--.+-[0-9a-f]{12}\.json$/);
+  } finally {
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+});
+
+test("remoteNameFor: ssh URLs with ports match their plain equivalents", () => {
+  const mk = url => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "ccmcp-u-"));
+    fs.mkdirSync(path.join(d, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(d, ".git", "config"), `[remote "origin"]\n\turl = ${url}\n`);
+    return d;
+  };
+  const a = mk("ssh://git@github.com:22/acme/widgets.git");
+  const b = mk("https://github.com/acme/widgets.git");
+  try {
+    assert.equal(
+      g.remoteNameFor(path.join(a, "common-context.json")),
+      g.remoteNameFor(path.join(b, "common-context.json"))
+    );
+  } finally {
+    fs.rmSync(a, { recursive: true, force: true });
+    fs.rmSync(b, { recursive: true, force: true });
+  }
+});
+
+test("remoteNameFor: git worktrees resolve the shared origin", () => {
+  const main = fs.mkdtempSync(path.join(os.tmpdir(), "ccmv-main-"));
+  const wt = fs.mkdtempSync(path.join(os.tmpdir(), "ccmv-wt-"));
+  try {
+    fs.mkdirSync(path.join(main, ".git"), { recursive: true });
+    fs.writeFileSync(path.join(main, ".git", "config"), '[remote "origin"]\n\turl = https://github.com/acme/widgets.git\n');
+    fs.writeFileSync(path.join(wt, ".git"), `gitdir: ${path.join(main, ".git", "worktrees", "wt")}\n`);
+    fs.mkdirSync(path.join(main, ".git", "worktrees", "wt"), { recursive: true });
+    fs.writeFileSync(path.join(main, ".git", "worktrees", "wt", "config"), '[remote "origin"]\n\turl = https://github.com/acme/widgets.git\n');
+    assert.equal(
+      g.remoteNameFor(path.join(wt, "common-context.json")),
+      "common-context--github-com-acme-widgets.json"
+    );
+  } finally {
+    fs.rmSync(main, { recursive: true, force: true });
+    fs.rmSync(wt, { recursive: true, force: true });
+  }
+});
+
+test("remoteNameFor: distinct junk sync ids do not collapse", () => {
+  process.env.CONTEXT_MCP_SYNC_ID = "!!!";
+  const a = g.remoteNameFor("/tmp/x/store.json");
+  process.env.CONTEXT_MCP_SYNC_ID = "???";
+  const b = g.remoteNameFor("/tmp/x/store.json");
+  assert.notEqual(a, b);
+  assert.match(a, /^common-context--shared-[0-9a-f]{6}\.json$/);
+});
+
+test("timedFetch aborts a hanging server", async () => {
+  const http = require("node:http");
+  const server = http.createServer(() => {}); // accepts, never responds
+  await new Promise(r => server.listen(0, "127.0.0.1", r));
+  try {
+    const t0 = Date.now();
+    await assert.rejects(g.timedFetch(`http://127.0.0.1:${server.address().port}`, {}, 150));
+    assert.ok(Date.now() - t0 < 5000, "aborted near the deadline");
+  } finally {
+    server.close();
+  }
+});
+
+test("drive calls refresh once and retry on 401", async () => {
+  process.env.CONTEXT_MCP_SYNC_ID = "retry-test";
+  login();
+  let tokenPosts = 0;
+  let listCalls = 0;
+  global.fetch = async url => {
+    const u = new URL(url);
+    if (u.hostname === "oauth2.googleapis.com") {
+      tokenPosts++;
+      return { ok: true, status: 200, json: async () => ({ access_token: "fresh", expires_in: 3600 }), text: async () => "" };
+    }
+    if (u.pathname.startsWith("/upload/")) {
+      return { ok: true, status: 200, json: async () => ({ id: "id-1", name: "n", modifiedTime: new Date().toISOString() }), text: async () => "" };
+    }
+    listCalls++;
+    if (listCalls === 1) return { ok: false, status: 401, json: async () => ({}), text: async () => "unauthorized" };
+    return { ok: true, status: 200, json: async () => ({ files: [] }), text: async () => "" };
+  };
+  const { dir, store } = makeStore();
+  try {
+    store.write(() => {});
+    const push = await g.pushNow(store);
+    assert.equal(tokenPosts, 1, "one forced refresh");
+    assert.equal(listCalls, 2, "list retried after refresh");
+    assert.equal(push.pushed, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("concurrent expired-token readers trigger a single refresh", async () => {
+  login();
+  g.saveTokens({ access_token: "stale", refresh_token: "r", expiry_date: Date.now() - 1000 });
+  let tokenPosts = 0;
+  global.fetch = async () => {
+    tokenPosts++;
+    await new Promise(r => setTimeout(r, 50));
+    return { ok: true, status: 200, json: async () => ({ access_token: `fresh-${tokenPosts}`, expires_in: 3600 }), text: async () => "" };
+  };
+  try {
+    const [a, b, c] = await Promise.all([g.getAccessToken(), g.getAccessToken(), g.getAccessToken()]);
+    assert.equal(tokenPosts, 1, "refresh serialized across callers");
+    assert.equal(a, b);
+    assert.equal(b, c);
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
+test("findDriveFile picks the newest of same-named duplicates", async () => {
+  login();
+  global.fetch = async () => ({
+    ok: true, status: 200,
+    json: async () => ({ files: [
+      { id: "old", name: "x", modifiedTime: "2026-01-01T00:00:00.000Z" },
+      { id: "new", name: "x", modifiedTime: "2026-02-01T00:00:00.000Z" },
+    ] }),
+    text: async () => "",
+  });
+  try {
+    const found = await g.findDriveFile("x");
+    assert.equal(found.id, "new");
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
+test("listSyncedRemotes returns newest first", async () => {
+  login();
+  global.fetch = async () => ({
+    ok: true, status: 200,
+    json: async () => ({ files: [
+      { id: "a", name: "common-context--b.json", modifiedTime: "2026-01-01T00:00:00.000Z" },
+      { id: "b", name: "common-context.json", modifiedTime: "2026-03-01T00:00:00.000Z" },
+      { id: "c", name: "common-context--a.json", modifiedTime: "2026-02-01T00:00:00.000Z" },
+    ] }),
+    text: async () => "",
+  });
+  try {
+    const names = (await g.listSyncedRemotes()).map(f => f.name);
+    assert.deepEqual(names, ["common-context.json", "common-context--a.json", "common-context--b.json"]);
+  } finally {
+    global.fetch = realFetch;
+  }
+});
+
+test("unreadable-remote backups are pruned to five", async () => {
+  process.env.CONTEXT_MCP_SYNC_ID = "prune-test";
+  const drive = fakeDrive();
+  global.fetch = drive.fetch;
+  login();
+  const { dir, store } = makeStore();
+  try {
+    store.write(() => {});
+    for (let i = 0; i < 7; i++) fs.writeFileSync(`${store.file}.remote-backup-${i}`, "junk");
+    drive.put("common-context--prune-test.json", "{junk");
+    await g.pullIfNewer(store);
+    const left = fs.readdirSync(dir).filter(f => f.includes(".remote-backup-"));
+    assert.equal(left.length, 5);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("OAuth helpers: state round-trips, mismatch and errors rejected", () => {
+  const cfg = { clientId: "id", clientSecret: "secret" };
+  const url = g.buildAuthUrl(cfg, "http://127.0.0.1:9/callback", "s3cr3t");
+  assert.match(url, /state=s3cr3t/);
+  assert.match(url, /scope=.*drive/);
+  assert.equal(g.parseAuthCallback("/callback?code=abc&state=s3cr3t", "s3cr3t"), "abc");
+  assert.throws(() => g.parseAuthCallback("/callback?code=abc&state=nope", "s3cr3t"), /state mismatch/);
+  assert.throws(() => g.parseAuthCallback("/callback?error=denied&state=s3cr3t", "s3cr3t"), /denied/);
+  assert.throws(() => g.parseAuthCallback("/callback?state=s3cr3t", "s3cr3t"), /missing code/);
+  assert.equal(g.escHtml('<b>&"'), "&lt;b&gt;&amp;&quot;");
+});
+
+test("readCappedText refuses oversized bodies", async () => {
+  const reader = chunks => {
+    let i = 0;
+    return { read: async () => (i < chunks.length ? { done: false, value: chunks[i++] } : { done: true, value: undefined }), cancel: async () => {} };
+  };
+  const res = chunks => ({ headers: { get: () => null }, body: { getReader: () => reader(chunks) }, text: async () => { throw new Error("must stream"); } });
+  const small = await g.readCappedText(res([new Uint8Array([104, 105])]), 16);
+  assert.equal(small, "hi");
+  await assert.rejects(g.readCappedText(res([new Uint8Array(10), new Uint8Array(10)]), 16), /too large/);
+  await assert.rejects(
+    g.readCappedText({ headers: { get: () => String(10 ** 9) }, body: null, text: async () => "" }),
+    /too large/
+  );
+});
+
+test("openCommand uses a shell builtin shim on Windows", () => {
+  assert.deepEqual(g.openCommand("darwin"), { cmd: "open", args: [] });
+  assert.deepEqual(g.openCommand("linux"), { cmd: "xdg-open", args: [] });
+  assert.deepEqual(g.openCommand("win32"), { cmd: "cmd", args: ["/c", "start", ""] });
 });
 
 test("loadSyncState tolerates a missing or corrupt sidecar", () => {

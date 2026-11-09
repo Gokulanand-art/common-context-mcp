@@ -84,12 +84,27 @@ function readText(file) {
  * Writes `after` to `file` only when it differs from `before`. Keeps a timestamped
  * backup and the original permissions (configs often hold API keys).
  */
+/** Keeps only the newest backups of a file; ISO stamps sort chronologically. Best-effort. */
+function pruneBackups(file) {
+  try {
+    const dir = path.dirname(file);
+    const prefix = `${path.basename(file)}.bak-`;
+    const matches = fs.readdirSync(dir).filter(f => f.startsWith(prefix)).sort();
+    for (const f of matches.slice(0, Math.max(0, matches.length - 10))) {
+      try {
+        fs.unlinkSync(path.join(dir, f));
+      } catch {}
+    }
+  } catch {}
+}
+
 function writeIfChanged(file, before, after) {
   if (before === after) return "unchanged";
   fs.mkdirSync(path.dirname(file), { recursive: true });
   if (exists(file)) {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     fs.copyFileSync(file, `${file}.bak-${stamp}`);
+    pruneBackups(file);
   }
   const mode = exists(file) ? fs.statSync(file).mode & 0o777 : 0o644;
   const tmp = `${file}.${process.pid}.tmp`;
@@ -514,6 +529,155 @@ function describeTarget(agent) {
   return m.files ? m.files().join(", ") : m.file;
 }
 
+// ─── Removal (uninstall) ────────────────────────────────────────────
+// Every writer above has an inverse here. Inverses only remove what we wrote:
+// user-owned entries, files and comments are left alone, and anything ambiguous
+// is reported as manual instead of guessed at.
+
+/** True when a JSON MCP entry is one we wrote (any of our shapes) or a legacy one. */
+function isOurServer(entry) {
+  if (!entry || typeof entry !== "object") return false;
+  if (entry.command === COMMAND) return true;
+  if (Array.isArray(entry.command) && entry.command.includes(COMMAND)) return true;
+  return isLegacy(entry);
+}
+
+function removeJsonServer(config, key) {
+  const next = JSON.parse(JSON.stringify(config));
+  const group = next[key];
+  if (!group || typeof group !== "object" || !(SERVER_KEY in group)) return { config: next, removed: false };
+  if (!isOurServer(group[SERVER_KEY])) return { config: next, removed: false, custom: true };
+  delete next[key][SERVER_KEY];
+  return { config: next, removed: true };
+}
+
+function applyJsonUnmcp(file, key) {
+  const before = readJsonStrict(file);
+  const { config: after, removed, custom } = removeJsonServer(before, key);
+  if (custom) return "manual";
+  if (!removed) return "unchanged";
+  return writeIfChanged(file, readText(file), JSON.stringify(after, null, 2) + "\n") === "updated" ? "removed" : "unchanged";
+}
+
+/** Strips our TOML block, preserving Codex's hook-approval tables wherever they sit. */
+function withoutTomlServer(text) {
+  const { outside } = splitToml(text); // still refuses user-owned blocks
+  const inside = preservedHookState(text);
+  const split = takeHookState(outside.split("\n"));
+  const state = [...new Set([...inside, ...split.state])];
+  const base = split.rest.join("\n").replace(/\s*$/, "");
+  const parts = [];
+  if (base) parts.push(base);
+  if (state.length) parts.push(state.join("\n"));
+  return parts.length ? parts.join("\n\n") + "\n" : "";
+}
+
+function applyTomlUnmcp(file) {
+  const before = readText(file);
+  if (!before.includes(TOML_START)) return "unchanged";
+  return writeIfChanged(file, before, withoutTomlServer(before)) === "updated" ? "removed" : "unchanged";
+}
+
+/** Strips our YAML block; drops the top-level header too when its section is left empty. */
+function withoutYamlServer(text, topKey) {
+  const start = text.indexOf(YAML_START);
+  const end = text.indexOf(YAML_END);
+  let rest = text;
+  if (start !== -1 && end > start) {
+    const stop = text[end + YAML_END.length] === "\n" ? end + YAML_END.length + 1 : end + YAML_END.length;
+    rest = text.slice(0, start) + text.slice(stop);
+  }
+  if (new RegExp(`^ {2}("?)${SERVER_KEY}\\1:`, "m").test(rest)) {
+    throw new Error(`the config still defines a server named ${SERVER_KEY} outside the managed block; edit it by hand`);
+  }
+  const lines = rest.split("\n");
+  const hi = lines.findIndex(l => new RegExp(`^${topKey}:[ \\t]*(#.*)?$`).test(l));
+  if (hi !== -1 && new RegExp(`^${topKey}:[ \\t]*$`).test(lines[hi])) {
+    let hasContent = false;
+    for (let i = hi + 1; i < lines.length; i++) {
+      if (lines[i].trim() === "") continue;
+      if (/^[ \t]+\S/.test(lines[i])) hasContent = true;
+      break;
+    }
+    if (!hasContent) lines.splice(hi, 1);
+  }
+  const out = lines.join("\n").replace(/\s*$/, "");
+  return out ? out + "\n" : "";
+}
+
+function applyYamlUnmcp(file, topKey) {
+  const before = readText(file);
+  if (!before.includes(YAML_START)) return "unchanged";
+  return writeIfChanged(file, before, withoutYamlServer(before, topKey)) === "updated" ? "removed" : "unchanged";
+}
+
+/** Removes our protocol block; the rest of the file is untouched. */
+function withoutMarkdownBlock(text) {
+  const start = text.indexOf(MD_START);
+  const end = text.indexOf(MD_END);
+  if (start === -1 || end <= start) return text;
+  const rest = text.slice(0, start) + text.slice(end + MD_END.length);
+  const body = rest.replace(/^\s*/, "").replace(/\s*$/, "");
+  return body ? body + "\n" : "";
+}
+
+function applyRulesRemove(file) {
+  const before = readText(file);
+  if (!before.includes(MD_START)) return "unchanged";
+  return writeIfChanged(file, before, withoutMarkdownBlock(before)) === "updated" ? "removed" : "unchanged";
+}
+
+function withoutInstruction(config, instructionFile) {
+  const next = JSON.parse(JSON.stringify(config));
+  if (!Array.isArray(next.instructions)) return next;
+  next.instructions = next.instructions.filter(f => f !== instructionFile);
+  if (next.instructions.length === 0) delete next.instructions;
+  return next;
+}
+
+function applyKiloUninstructions(file) {
+  const before = readJsonStrict(file);
+  const after = withoutInstruction(before, PROTOCOL_FILE);
+  if (JSON.stringify(before) === JSON.stringify(after)) return "unchanged";
+  return writeIfChanged(file, readText(file), JSON.stringify(after, null, 2) + "\n") === "updated" ? "removed" : "unchanged";
+}
+
+/** Drops our hook entries; empty events (and an empty hooks object) go with them. */
+function withoutJsonHooks(settings, events) {
+  const next = JSON.parse(JSON.stringify(settings));
+  if (!next.hooks || typeof next.hooks !== "object") return next;
+  for (const event of Object.keys(events)) {
+    if (!Array.isArray(next.hooks[event])) continue;
+    next.hooks[event] = withoutOurs(next.hooks[event]);
+    if (next.hooks[event].length === 0) delete next.hooks[event];
+  }
+  if (Object.keys(next.hooks).length === 0) delete next.hooks;
+  return next;
+}
+
+function applyJsonUnhooks(file, events) {
+  const before = readJsonStrict(file);
+  const after = withoutJsonHooks(before, events);
+  if (JSON.stringify(before) === JSON.stringify(after)) return "unchanged";
+  return writeIfChanged(file, readText(file), JSON.stringify(after, null, 2) + "\n") === "updated" ? "removed" : "unchanged";
+}
+
+/** Deletes the OpenCode plugin files, but only when they carry our mark. */
+function removeOpenCodePlugin() {
+  let removed = false;
+  for (const f of [OPENCODE_PLUGIN, OPENCODE_PLUGIN_LEGACY]) {
+    const text = readText(f);
+    if (text && text.includes(OPENCODE_MARK)) {
+      fs.unlinkSync(f);
+      removed = true;
+    }
+  }
+  try {
+    fs.rmdirSync(path.dirname(OPENCODE_PLUGIN)); // drops our dir when empty; fails safe otherwise
+  } catch {}
+  return removed ? "removed" : "unchanged";
+}
+
 // ─── Registry ─────────────────────────────────────────────────────────
 
 /**
@@ -660,6 +824,58 @@ function configureAgent(agent, { enableHooks = false } = {}) {
   return results;
 }
 
+const HOOK_UNINSTALLERS = {
+  claude: () => ({ label: "enforcement hooks", status: applyJsonUnhooks(CLAUDE_SETTINGS, CLAUDE_HOOKS), path: CLAUDE_SETTINGS }),
+  codex: () => null,
+  cursor: () => ({ label: "enforcement hooks", status: applyJsonUnhooks(CURSOR_HOOKS, CURSOR_EVENTS), path: CURSOR_HOOKS }),
+  gemini: () => {
+    const file = path.join(HOME, ".gemini", "settings.json");
+    return { label: "enforcement hooks", status: applyJsonUnhooks(file, GEMINI_EVENTS), path: file };
+  },
+  opencode: () => ({ label: "enforcement plugin", status: removeOpenCodePlugin(), path: OPENCODE_PLUGIN }),
+};
+
+/**
+ * Removes one agent's MCP registration, rules and hooks installed by configureAgent.
+ * Returns [{label, status, path}] where status is "removed" | "unchanged" | "manual".
+ * Backups (*.bak-*) and the shared PROTOCOL_FILE are always left alone.
+ */
+function unconfigureAgent(agent) {
+  const results = [];
+  if (agent.unsupported) return [{ label: "not supported", status: "manual", path: agent.unsupported }];
+  const m = agent.mcp;
+  if (m.kind === "json") {
+    for (const file of m.files ? m.files() : [m.file]) {
+      const status = applyJsonUnmcp(file, m.key);
+      results.push({
+        label: "MCP server",
+        status,
+        path: status === "manual" ? `${file} defines its own ${SERVER_KEY} entry; left alone` : file,
+      });
+    }
+  } else if (m.kind === "yaml") {
+    results.push({ label: "MCP server", status: applyYamlUnmcp(m.file, m.topKey), path: m.file });
+  } else {
+    results.push({ label: "MCP server + hooks", status: applyTomlUnmcp(m.file), path: m.file });
+  }
+
+  if (agent.rules && agent.rules.kind === "kilo") {
+    const file = agent.rules.file();
+    results.push({ label: "protocol rules (instructions)", status: applyKiloUninstructions(file), path: file });
+  } else if (agent.rules) {
+    const file = agent.rules.resolve ? agent.rules.resolve() : agent.rules.file;
+    results.push({ label: "protocol rules", status: applyRulesRemove(file), path: file });
+  } else {
+    results.push({ label: "protocol rules", status: "manual", path: agent.manual });
+  }
+
+  if (agent.hooks) {
+    const h = HOOK_UNINSTALLERS[agent.hooks]();
+    if (h) results.push(h);
+  }
+  return results;
+}
+
 module.exports = {
   AGENTS,
   PROTOCOL,
@@ -668,6 +884,15 @@ module.exports = {
   SERVER_KEY,
   COMMAND,
   configureAgent,
+  unconfigureAgent,
+  removeJsonServer,
+  withoutTomlServer,
+  withoutYamlServer,
+  withoutMarkdownBlock,
+  withoutInstruction,
+  withoutJsonHooks,
+  removeOpenCodePlugin,
+  pruneBackups,
   writeProtocolFile,
   withJsonServer,
   withTomlServer,

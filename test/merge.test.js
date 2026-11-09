@@ -120,6 +120,23 @@ test("garbage or newer-schema remotes are refused, never merged", () => {
   assert.throws(() => mergeData(data(), { version: 999, contexts: {} }), StoreError);
 });
 
+test("reserved keys in either side are dropped, never crash the merge", () => {
+  const local = JSON.parse('{"version":2,"created":"t","contexts":{"__proto__":{"value":"x","tags":[],"agent":"a","updated":"t","history":[]}},"sessions":[],"failures":[],"claims":{},"broadcasts":[],"patterns":{"works":[],"fails":[]}}');
+  const remote = JSON.parse('{"version":2,"created":"t","contexts":{"constructor":{"value":"y","tags":[],"agent":"b","updated":"t","history":[]}},"sessions":[],"failures":[],"claims":{},"broadcasts":[],"patterns":{"works":[],"fails":[]}}');
+  const m = mergeData(local, remote);
+  assert.deepEqual(Object.keys(m.contexts), []);
+  assert.equal(Object.getPrototypeOf(m.contexts), Object.prototype);
+});
+
+test("merged histories are capped", () => {
+  const hist = n => Array.from({ length: n }, (_, i) => ({ value: `v${i}`, agent: "a", updated: `2026-01-01T00:00:${String(i % 60).padStart(2, "0")}Z` }));
+  const m = mergeData(
+    data({ contexts: { k: ctx("a", "2026-01-01T00:00:00.000Z", { history: hist(40) }) } }),
+    data({ contexts: { k: ctx("b", "2026-01-02T00:00:00.000Z", { history: hist(40).map(h => ({ ...h, agent: "b" })) }) } })
+  );
+  assert.ok(m.contexts.k.history.length <= 50, `capped, got ${m.contexts.k.history.length}`);
+});
+
 test("a v1 remote upgrades cleanly during merge", () => {
   const v1 = {
     version: 1, created: "2026-01-01T00:00:00.000Z",

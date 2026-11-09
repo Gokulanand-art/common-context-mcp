@@ -1,3 +1,4 @@
+import * as fs from "node:fs";
 import * as path from "node:path";
 
 export interface Config {
@@ -39,15 +40,25 @@ export const STORE_FILE_NAME = "common-context.json";
  * first use. The folder is CONTEXT_MCP_PROJECT_DIR when set (hooks pass the folder each event runs in),
  * otherwise the process working directory. CONTEXT_MCP_FILE, if set, names the file directly.
  */
+/** Resolves symlinked directories so two spellings of one store share one lock file. */
+function resolveStoreFile(file: string): string {
+  const abs = path.resolve(file);
+  try {
+    return path.join(fs.realpathSync(path.dirname(abs)), path.basename(abs));
+  } catch {
+    return abs;
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const explicitFile = env.CONTEXT_MCP_FILE?.trim();
   const explicitDir = env.CONTEXT_MCP_PROJECT_DIR?.trim();
   const projectDir = explicitDir || process.cwd();
-  const file = explicitFile || path.join(projectDir, STORE_FILE_NAME);
+  const file = resolveStoreFile(explicitFile || path.join(projectDir, STORE_FILE_NAME));
   return {
-    file: path.resolve(file),
+    file,
     agentId:
-      env.CONTEXT_MCP_AGENT_ID?.trim() ||
+      env.CONTEXT_MCP_AGENT_ID?.trim().replace(/[\x00-\x1F\x7F]/g, "") ||
       `agent-${process.pid}-${Math.random().toString(36).slice(2, 8)}`,
     staleMs: positiveNumber("CONTEXT_MCP_STALE_MINUTES", env.CONTEXT_MCP_STALE_MINUTES, 15) * 60_000,
     claimMs: positiveNumber("CONTEXT_MCP_CLAIM_MINUTES", env.CONTEXT_MCP_CLAIM_MINUTES, 30) * 60_000,

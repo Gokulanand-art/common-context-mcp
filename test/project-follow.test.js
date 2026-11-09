@@ -71,6 +71,32 @@ test("the server follows the client's workspace folder and keeps one store per f
   }
 });
 
+test("a client that stops answering roots/list is asked again only after a cooldown", async () => {
+  const home = tmp("ccmcp-home-");
+  const a = tmp("ccmcp-a-");
+  const env = { ...process.env, HOME: home };
+  delete env.CONTEXT_MCP_FILE;
+  delete env.CONTEXT_MCP_PROJECT_DIR;
+  const transport = new StdioClientTransport({ command: process.execPath, args: [BIN], cwd: a, env, stderr: "ignore" });
+  const client = new Client({ name: "stall-roots", version: "1.0.0" }, { capabilities: { roots: {} } });
+  client.setRequestHandler(ListRootsRequestSchema, () => new Promise(() => {})); // hangs forever
+  await client.connect(transport);
+  try {
+    const t0 = Date.now();
+    await client.callTool({ name: "load_context", arguments: {} });
+    const firstMs = Date.now() - t0;
+    assert.ok(firstMs >= 1500, `first call pays the roots timeout, took ${firstMs}ms`);
+    const t1 = Date.now();
+    await client.callTool({ name: "search_context", arguments: { query: "x" } });
+    const secondMs = Date.now() - t1;
+    assert.ok(secondMs < 1500, `second call skips the stalled check, took ${secondMs}ms`);
+    assert.ok(fs.existsSync(path.join(a, "common-context.json")), "falls back to the launch folder");
+  } finally {
+    await client.close();
+    for (const d of [home, a]) fs.rmSync(d, { recursive: true, force: true });
+  }
+});
+
 test("without client roots the server uses the folder it started in", async () => {
   const home = tmp("ccmcp-home-");
   const a = tmp("ccmcp-a-");

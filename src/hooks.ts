@@ -162,6 +162,21 @@ function writeState(sid: string, s: State): void {
   const tmp = `${p}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(s), { mode: 0o600 });
   fs.renameSync(tmp, p);
+  sweepOldState();
+}
+
+/** Deletes per-session state files older than a week. Best-effort; sessions never last that long. */
+function sweepOldState(): void {
+  try {
+    const cutoff = Date.now() - 7 * 86_400_000;
+    for (const f of fs.readdirSync(STATE_DIR)) {
+      if (!f.endsWith(".json")) continue;
+      const p = path.join(STATE_DIR, f);
+      try {
+        if (fs.statSync(p).mtimeMs < cutoff) fs.unlinkSync(p);
+      } catch {}
+    }
+  } catch {}
 }
 
 function storeFor(ctx: Ctx): ContextStore {

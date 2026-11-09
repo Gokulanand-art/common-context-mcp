@@ -8,6 +8,9 @@ import {
   ContextStore,
   SCHEMA_VERSION,
   appendArchive,
+  capHistory,
+  isReservedKey,
+  readArchiveEntries,
   splitArchive,
   type ContextData,
   type SessionEntry,
@@ -15,7 +18,7 @@ import {
 import { excerpt, renderLoad, type Detail } from "./render.js";
 import { redact } from "./redact.js";
 import { log } from "./log.js";
-import { pullIfNewer, pushNow, syncStatus, isLoggedIn } from "./google.js";
+import { LEGACY_REMOTE_NAME, isLoggedIn, listSyncedRemotes, pullIfNewer, pushNow, remoteNameFor, syncStatus } from "./google.js";
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const VERSION: string = (require("../package.json") as { version: string }).version;
@@ -94,39 +97,78 @@ export function createServer(initial: Config = loadConfig()): McpServer {
     s.heartbeat = now();
   }
 
+  /** Every store this server has bound, so the retry timer can push them all. */
+  const knownStores = new Map<string, ContextStore>([[initial.file, new ContextStore(initial)]]);
+
   /** Points the store at a folder. A different folder starts a new session: the agent must load it again. */
   function bindProject(dir: string): void {
     if (dir === projectDir) return;
     projectDir = dir;
     config = { ...initial, file: path.join(dir, STORE_FILE_NAME) };
     store = new ContextStore(config);
+    knownStores.set(config.file, store);
     state.loaded = false;
     state.completed = false;
     state.sessionId = null;
     log.info(`project: ${dir} (store: ${config.file})`);
   }
 
-  /** The first file:// workspace root the client reports, or null. */
+  // Failed pushes retry quietly: a push that dies offline would otherwise wait for the next
+  // write. pushNow is a cheap local hash check when nothing changed, so the idle cost is ~nil.
+  // Unref'd so it never holds the process open on its own.
+  const retryTimer = setInterval(() => {
+    if (!isLoggedIn()) return;
+    void (async () => {
+      for (const s of knownStores.values()) {
+        try {
+          await pushNow(s);
+        } catch {}
+      }
+    })();
+  }, 60_000);
+  retryTimer.unref?.();
+
+  /** Last good workspace root. Only used to ride out a client that stops answering roots/list. */
+  let lastGoodRoot: string | null = null;
+  let rootsCooldownUntil = 0;
+
+  /** The first file:// workspace root the client reports, or null when the client has no roots. */
   async function clientRoot(): Promise<string | null> {
     const caps = server.server.getClientCapabilities();
     if (!caps?.roots) return null;
-    try {
-      const res = await Promise.race([
-        server.server.listRoots(),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("roots/list timed out")), 2000)),
-      ]);
-      const root = res.roots.find(r => r.uri.startsWith("file://"));
-      return root ? fileURLToPath(root.uri) : null;
-    } catch (e) {
-      log.warn(`could not read roots: ${(e as Error).message}`);
-      return null;
-    }
+    const res = await Promise.race([
+      server.server.listRoots(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("roots/list timed out")), 2000)),
+    ]);
+    const root = res.roots.find(r => r.uri.startsWith("file://"));
+    return root ? fileURLToPath(root.uri) : null;
   }
 
   /** Before every tool call: follow the project folder the client is in. */
   async function syncProject(): Promise<void> {
     if (pinnedFile) return;
-    bindProject((await clientRoot()) ?? launchDir);
+    const caps = server.server.getClientCapabilities();
+    if (!caps?.roots) {
+      bindProject(launchDir);
+      return;
+    }
+    // The client answered before and went quiet: reuse the last root for a while instead of
+    // taxing every tool call with the 2s timeout. Successful answers always stay fresh.
+    if (Date.now() < rootsCooldownUntil && lastGoodRoot) {
+      bindProject(lastGoodRoot);
+      return;
+    }
+    try {
+      const dir = (await clientRoot()) ?? launchDir;
+      lastGoodRoot = dir;
+      rootsCooldownUntil = 0;
+      bindProject(dir);
+    } catch (e) {
+      log.warn(`could not read roots: ${(e as Error).message}`);
+      rootsCooldownUntil = Date.now() + 10_000;
+      lastGoodRoot ??= launchDir;
+      bindProject(lastGoodRoot);
+    }
   }
 
   function register<S extends z.ZodRawShape>(
@@ -214,7 +256,7 @@ export function createServer(initial: Config = loadConfig()): McpServer {
           keepId: id,
           now: t,
         });
-        appendArchive(config.file, moved.sessions, moved.failures);
+        appendArchive(config.file, moved.sessions, moved.failures, moved.broadcasts);
         return view(d, id, mode);
       });
       state.loaded = true;
@@ -239,6 +281,7 @@ export function createServer(initial: Config = loadConfig()): McpServer {
       tags: z.array(z.string().max(50)).max(20).optional().describe("Tags for categorization"),
     },
     ({ key, value: raw, tags }) => {
+      if (isReservedKey(key)) return fail(`ERROR: "${key}" is reserved and cannot be used as a context key.`);
       const value = redact(clip(raw, CAP.value));
       store.write(d => {
         const prev = d.contexts[key];
@@ -248,7 +291,7 @@ export function createServer(initial: Config = loadConfig()): McpServer {
           agent: me,
           updated: now(),
           history: prev
-            ? [...prev.history, { value: prev.value, agent: prev.agent, updated: prev.updated }]
+            ? capHistory([...prev.history, { value: prev.value, agent: prev.agent, updated: prev.updated }])
             : [],
         };
         checkpoint(d, `Last saved: ${key} = ${clip(value, 200)}`);
@@ -381,6 +424,21 @@ export function createServer(initial: Config = loadConfig()): McpServer {
         return out;
       });
 
+      // Archived knowledge stays reachable: same scan over the newest archived items.
+      const archived = readArchiveEntries(store.file);
+      for (const s of archived.sessions) {
+        if (has(s.title, s.accomplished, s.learned, s.decisions, s.next_steps, s.checkpoint)) {
+          const text = pick(s.accomplished, s.learned, s.decisions, s.next_steps, s.checkpoint, s.title);
+          results.push(`[archived-session:${s.id}] ${s.title} (${s.status}): ${excerpt(text, q, 220)}`);
+        }
+      }
+      for (const f of archived.failures) {
+        if (has(f.approach, f.why_failed)) results.push(`[archived-failure] ${excerpt(pick(f.approach, f.why_failed), q, 220)}`);
+      }
+      for (const b of archived.broadcasts) {
+        if (has(b.message)) results.push(`[archived-broadcast] ${excerpt(b.message, q, 220)}`);
+      }
+
       if (results.length === 0) return ok(`No results found for "${query}".`);
       const shown = results.slice(0, limit ?? 8);
       const more = results.length > shown.length ? `\n...${results.length - shown.length} more; narrow the query or raise limit.` : "";
@@ -398,6 +456,7 @@ export function createServer(initial: Config = loadConfig()): McpServer {
       area: z.string().min(1).max(500).describe("File path or area to claim"),
     },
     ({ area }) => {
+      if (isReservedKey(area)) return fail(`ERROR: "${area}" is reserved and cannot be claimed.`);
       const message = store.write(d => {
         const t = Date.now();
         const existing = d.claims[area];
@@ -461,11 +520,12 @@ export function createServer(initial: Config = loadConfig()): McpServer {
       message: z.string().min(1).max(MAX_TEXT).describe("Message to broadcast to all agents"),
     },
     ({ message }) => {
+      const text = redact(clip(message, CAP.value));
       store.write(d => {
-        d.broadcasts.push({ message, agent: me, timestamp: now() });
-        checkpoint(d, `Broadcast: ${clip(message, 200)}`);
+        d.broadcasts.push({ message: text, agent: me, timestamp: now() });
+        checkpoint(d, `Broadcast: ${clip(text, 200)}`);
       });
-      return ok(`Broadcast sent: ${message}`);
+      return ok(`Broadcast sent: ${text}`);
     }
   );
 
@@ -479,23 +539,25 @@ export function createServer(initial: Config = loadConfig()): McpServer {
       context: z.string().max(MAX_TEXT).describe("Full context for the receiving agent"),
     },
     ({ to_agent, summary, context }) => {
+      const sum = redact(clip(summary, CAP.notes));
+      const ctx = redact(clip(context, CAP.value));
       store.write(d => {
         const t = now();
         d.sessions.push({
           id: nextId(d, "handoff"),
-          title: `Handoff to ${to_agent}: ${summary}`,
+          title: `Handoff to ${to_agent}: ${clip(sum, 200)}`,
           status: "completed",
-          accomplished: context,
+          accomplished: ctx,
           learned: "",
-          decisions: summary,
-          next_steps: `Continue from: ${summary}`,
+          decisions: sum,
+          next_steps: `Continue from: ${sum}`,
           checkpoint: "Handoff complete",
           agent: me,
           timestamp: t,
           heartbeat: t,
           ended_at: t,
         });
-        d.broadcasts.push({ message: `HANDOFF to ${to_agent}: ${summary}`, agent: me, timestamp: t });
+        d.broadcasts.push({ message: `HANDOFF to ${to_agent}: ${clip(sum, 200)}`, agent: me, timestamp: t });
       });
       return ok(`Handoff recorded for ${to_agent}. Context saved for next agent.`);
     }
@@ -549,6 +611,29 @@ export function createServer(initial: Config = loadConfig()): McpServer {
       if (failures.length > 0) {
         out.push("--- FAILURES ---");
         for (const f of failures) out.push(`[${f.approach}] ${f.why_failed} by ${f.agent} at ${f.timestamp}`);
+        out.push("");
+      }
+      const liveClaims = Object.entries(d.claims)
+        .filter(([, c]) => Date.parse(c.expires) > Date.now())
+        .slice(0, LIMITS.audit);
+      if (liveClaims.length > 0) {
+        out.push("--- ACTIVE CLAIMS ---");
+        for (const [area, c] of liveClaims) out.push(`${area} → ${c.agent} (since ${c.since})`);
+        out.push("");
+      }
+      const casts = [...d.broadcasts].reverse().slice(0, 20);
+      if (casts.length > 0) {
+        out.push("--- BROADCASTS (recent 20) ---");
+        for (const b of casts) out.push(`${b.timestamp} ${b.agent}: ${clip(b.message, 200)}`);
+        out.push("");
+      }
+      const archived = readArchiveEntries(config.file, 20);
+      const archivedTotal = archived.sessions.length + archived.failures.length + archived.broadcasts.length;
+      if (archivedTotal > 0) {
+        out.push("--- ARCHIVED (recent 20 per kind) ---");
+        for (const s of archived.sessions) out.push(`[session:${s.id}] ${s.title} (${s.status}) by ${s.agent}`);
+        for (const f of archived.failures) out.push(`[failure:${f.approach}] ${clip(f.why_failed, 120)}`);
+        for (const b of archived.broadcasts) out.push(`[broadcast] ${clip(b.message, 120)}`);
         out.push("");
       }
       return ok(cap(out.join("\n")));
@@ -643,8 +728,25 @@ export function createServer(initial: Config = loadConfig()): McpServer {
     "sync_status",
     "Show Google Drive sync status (login, token, oauth config, this project's remote). Read-only.",
     {},
-    () => {
-      return ok(`Logged in: ${isLoggedIn() ? "yes" : "no"}\n${syncStatus(config.file)}`);
+    async () => {
+      const lines = [`Logged in: ${isLoggedIn() ? "yes" : "no"}`, syncStatus(config.file)];
+      if (isLoggedIn()) {
+        try {
+          const remotes = await listSyncedRemotes();
+          const mine = remoteNameFor(config.file);
+          const others = remotes.filter(r => r.name !== mine);
+          if (remotes.some(r => r.name === LEGACY_REMOTE_NAME)) {
+            lines.push(`Legacy remote "${LEGACY_REMOTE_NAME}" exists (3.4/3.5 shared file; safe to delete from Drive).`);
+          }
+          if (others.length > 0) {
+            lines.push(`Other synced projects (${others.length}): ${others.map(r => r.name).join(", ")}`);
+            lines.push("If this project syncs to the wrong file on another machine, set the same CONTEXT_MCP_SYNC_ID on all of them.");
+          }
+        } catch (e) {
+          lines.push(`Remote list unavailable: ${(e as Error).message}`);
+        }
+      }
+      return ok(lines.join("\n"));
     },
     { readOnly: true, requiresLoad: false }
   );
