@@ -50,25 +50,21 @@ The setup step detects your AI tools (Claude Code, Codex, Cursor, Gemini, OpenCo
 
 ### 2. Use it in any project
 
+Your agents talk to the store through MCP tools (the protocol below keeps them honest). You only need the CLI for health and sync:
+
 ```bash
-# Start a session — loads what the team already knows
-common-context-mcp load_context
-
-# Save a checkpoint after meaningful work
-common-context-mcp save_context \
-  --key "progress" \
-  --value "Implemented the login handler"
-
-# Record a failure so nobody repeats it
-common-context-mcp save_failure \
-  --approach "tried X" \
-  --why_failed "X timed out under load"
-
-# Close the session with a summary before your final answer
-common-context-mcp save_summary \
-  --title "Login handler" \
-  --accomplished "Handler implemented and tested"
+common-context-mcp doctor    # environment and store health
+common-context-mcp status     # Google Drive login/sync state
+common-context-mcp sync       # pull remote changes, then push
 ```
+
+What an agent does in a session:
+
+1. `load_context` first — loads what the team already knows
+2. `save_context` after each meaningful step — the checkpoint
+3. `save_failure`, then `search_context` — the moment something breaks
+4. `claim_area` / `release_area` — around edits to shared files
+5. `save_context`, then `save_summary` — before the final answer
 
 ---
 
@@ -105,8 +101,8 @@ The server sends these instructions to every connected agent. Follow them in ord
 | `get_audit_trail` | Recent sessions, failures, claims — most recent first | ✓ |
 | `resume_session` | Take over an interrupted session (refuses completed/live ones) | |
 | `session_status` | Store health: size, counts, interrupted sessions, estimated tokens | ✓ |
-| `sync_status` | Google Drive sync status (login, token, oauth config) | ✓ |
-| `sync_now` | Force sync with Google Drive: pull if remote newer, then push local | |
+| `sync_status` | Google Drive sync status (login, token, oauth config, this project's remote) | ✓ |
+| `sync_now` | Force sync with Google Drive: merge remote changes in, then push local | |
 
 > Every tool except `load_context` and `search_context` requires `load_context` to have run first in that session.
 
