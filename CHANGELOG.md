@@ -1,5 +1,9 @@
 # Changelog
 
+## 3.6.1
+
+- Releases now publish through npm OIDC trusted publishing: no `NPM_TOKEN` secret, no rotation. No code changes since 3.6.0.
+
 ## 3.6.0
 
 - **Drive sync is now merge-based, per project.** Each project syncs to its own remote file (`common-context--<project>.json`) instead of all projects sharing one file that overwrote each other. The identity is `CONTEXT_MCP_SYNC_ID` when set, else the git origin URL (stable across machines), else a hash of the folder.
