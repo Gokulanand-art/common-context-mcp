@@ -93,7 +93,7 @@ The server sends these instructions to every connected agent. Follow them in ord
 |:---|:---|:---:|
 | `load_context` | Start a session; load shared state, recent sessions, failures, interrupted work | |
 | `save_context` | Save a fact/decision/config under a key; overwrites keep history | |
-| `save_summary` | Close session with accomplished, learned, decisions, next steps | |
+| `save_summary` | Close session with title, accomplished, learned, decisions, next steps (title auto-derived when omitted) | |
 | `save_failure` | Record a failed approach and why, so future agents see it | |
 | `record_success` | Record an approach that worked, so it's preferred next time | |
 | `search_context` | Case-insensitive search across contexts, sessions, failures, broadcasts | ✓ |
