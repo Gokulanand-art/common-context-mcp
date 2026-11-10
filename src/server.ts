@@ -272,16 +272,26 @@ export function createServer(initial: Config = loadConfig()): McpServer {
     "save_context",
     "Save a fact, decision or config under a key. This is the checkpoint. Overwriting keeps the old value in history.",
     {
-      key: z.string().min(1).max(SHORT).describe("Unique key for this context entry"),
-      value: z.string().max(MAX_TEXT).describe("The value/content to store"),
+      key: z.string().min(1).max(SHORT).optional().describe("Unique key for this context entry (aliases: entry, name)"),
+      value: z.string().max(MAX_TEXT).optional().describe("The value/content to store (aliases: content, text)"),
+      entry: z.string().max(SHORT).optional().describe("Alias of key, for agents behind wrappers that hide the schema"),
+      name: z.string().max(SHORT).optional().describe("Alias of key, for agents behind wrappers that hide the schema"),
+      content: z.string().max(MAX_TEXT).optional().describe("Alias of value, for agents behind wrappers that hide the schema"),
+      text: z.string().max(MAX_TEXT).optional().describe("Alias of value, for agents behind wrappers that hide the schema"),
       tags: z.array(z.string().max(50)).max(20).optional().describe("Tags for categorization"),
     },
-    ({ key, value: raw, tags }) => {
-      if (isReservedKey(key)) return fail(`ERROR: "${key}" is reserved and cannot be used as a context key.`);
-      const value = redact(clip(raw, CAP.value));
+    ({ key, value: raw, entry, name, content, text, tags }) => {
+      const resolvedKey = (key ?? entry ?? name ?? "").trim();
+      const resolvedRaw = raw ?? content ?? text;
+      if (!resolvedKey || resolvedRaw === undefined) {
+        return fail(`ERROR: save_context needs a key and a value. Expected {"key": "...", "value": "..."} (key aliases: entry, name; value aliases: content, text).`);
+      }
+      if (isReservedKey(resolvedKey)) return fail(`ERROR: "${resolvedKey}" is reserved and cannot be used as a context key.`);
+      const keyOut = resolvedKey;
+      const value = redact(clip(resolvedRaw, CAP.value));
       store.write(d => {
-        const prev = d.contexts[key];
-        d.contexts[key] = {
+        const prev = d.contexts[keyOut];
+        d.contexts[keyOut] = {
           value,
           tags: tags ?? [],
           agent: me,
@@ -290,9 +300,9 @@ export function createServer(initial: Config = loadConfig()): McpServer {
             ? capHistory([...prev.history, { value: prev.value, agent: prev.agent, updated: prev.updated }])
             : [],
         };
-        checkpoint(d, `Last saved: ${key} = ${clip(value, 200)}`);
+        checkpoint(d, `Last saved: ${keyOut} = ${clip(value, 200)}`);
       });
-      return ok(`Saved context: ${key} = ${clip(value, 200)} (checkpoint recorded)`);
+      return ok(`Saved context: ${keyOut} = ${clip(value, 200)} (checkpoint recorded)`);
     }
   );
 
