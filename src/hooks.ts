@@ -264,10 +264,11 @@ const REMINDER = `common-context: load_context or search_context before work; ch
 
 const PROTOCOL = `common-context protocol (enforced by hooks):
 1. Before any other tool for this message, call ${full("load_context")} (first message of a session) or ${full("search_context")}.
-2. Call ${full("save_context")} after each meaningful step (this is the checkpoint).
+2. Call ${full("save_context")} with key and value after each meaningful step (this is the checkpoint).
 3. On any error, ${full("save_failure")} is recorded automatically; call ${full("search_context")} before trying an alternative.
 4. If you did any work for this message, call ${full("save_context")} to checkpoint it before your final answer.
-5. Before your final answer, call ${full("save_summary")} with what was done, learned, decided and next steps. Never give a final answer without it.`;
+5. Before your final answer, call ${full("save_summary")} with title, accomplished, learned, decisions and next_steps. Never give a final answer without it.
+6. On a greeting or message with no task: after loading, briefly summarize what is in progress and what is next, then ask what's on their mind.`;
 
 // ─── handlers ─────────────────────────────────────────────────────────
 
@@ -369,7 +370,7 @@ export function onStop(input: Input, ctx: Ctx): Decision {
   }
   const needsSummary = state.workSincePrompt && !state.summarizedSincePrompt;
   if (needsSummary) {
-    problems.push(`Before your final answer, call ${full("save_summary")} with accomplished, learned, decisions and next_steps.`);
+    problems.push(`Before your final answer, call ${full("save_summary")} with title, accomplished, learned, decisions and next_steps.`);
   }
 
   if (problems.length === 0) {
