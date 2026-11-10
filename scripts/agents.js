@@ -42,13 +42,14 @@ const codexHome = () => (process.env.CODEX_HOME && process.env.CODEX_HOME.trim()
 /** The rules every selected agent follows. Tool names may be prefixed by the agent. */
 const PROTOCOL = `## common-context protocol (mandatory)
 
-This machine shares one context store across AI agents through the \`common-context\` MCP server. Every model and agent with it installed follows this on every message, including greetings:
+One context store shared across AI agents via the \`common-context\` MCP server. Follow every message, including greetings:
 
-1. Before any other tool call or reply: \`load_context\` (first message of a session) or \`search_context\`.
-2. After each meaningful step: \`save_context\` (the checkpoint).
-3. On a failure: \`save_failure\`, then \`search_context\` before any alternative.
-4. Before editing a shared file: \`claim_area\`; \`release_area\` when done.
-5. Before the final answer: \`save_context\` with the final state, then \`save_summary\` (accomplished, learned, decisions, next_steps). Answer only after both succeed.
+1. First: \`load_context\` (first message of a session) or \`search_context\` — before any other tool call or reply.
+2. After each meaningful step: \`save_context\` (\`key\`, \`value\`) — the checkpoint.
+3. On failure: \`save_failure\` (\`approach\`, \`why_failed\`), then \`search_context\` before any alternative.
+4. Before editing a shared file: \`claim_area\` (\`area\`); \`release_area\` when done.
+5. Before the final answer: \`save_context\` the final state, then \`save_summary\` (\`title\`, \`accomplished\`, \`learned\`, \`decisions\`, \`next_steps\`).
+6. Greeting / no task: after loading, say what's in progress and next, ask what's on their mind.
 
 If the \`common-context\` tools are unavailable, say so and continue.
 `;
