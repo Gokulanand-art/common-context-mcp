@@ -107,6 +107,7 @@ function renderBrief(d: ContextData, currentId: string | null, o: RenderOptions)
     used += block.length;
   }
   out.push("", "You now have the shared knowledge you need. Proceed with your work.");
+  out.push("If the user's message has no task (a greeting like \"hi\"), brief them instead: what is in progress, what is next, then ask what's on their mind.");
   return out.join("\n");
 }
 
@@ -190,5 +191,6 @@ function renderFull(d: ContextData, currentId: string | null, o: RenderOptions):
 
   out.push("=== END OF CONTEXT ===");
   out.push("You now have full shared knowledge. Proceed with your work.");
+  out.push("If the user's message has no task (a greeting like \"hi\"), brief them instead: what is in progress, what is next, then ask what's on their mind.");
   return out.join("\n");
 }
