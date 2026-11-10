@@ -26,10 +26,11 @@ export const SERVER_NAME = "common-context";
 
 export const INSTRUCTIONS = `common-context protocol (mandatory, every message, including greetings):
 1. Before any other tool or reply, call load_context (first message of a session) or search_context.
-2. After each meaningful step, call save_context. This is the checkpoint.
-3. On a failure, call save_failure, then search_context before any alternative.
-4. Before editing a shared file, call claim_area; call release_area when done.
-5. Before the final answer: save_context with the final state, then save_summary. Give the final answer only after both succeed.
+2. After each meaningful step, call save_context with key and value. This is the checkpoint.
+3. On a failure, call save_failure with approach and why_failed, then search_context before any alternative.
+4. Before editing a shared file, call claim_area with area; call release_area when done.
+5. Before the final answer: save_context with the final state, then save_summary with title, accomplished, learned, decisions, next_steps. Give the final answer only after both succeed.
+6. On a greeting or message with no task: after loading, briefly summarize what is in progress and what is next, then ask what's on their mind.
 Every tool except load_context requires load_context first in this session.`;
 
 // Caps keep load_context useful as the store grows. Older items stay in the
