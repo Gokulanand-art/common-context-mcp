@@ -311,15 +311,22 @@ export function createServer(initial: Config = loadConfig()): McpServer {
     "save_summary",
     "Save session summary at end of work. MANDATORY before giving final response. Marks session as complete.",
     {
-      title: z.string().min(1).max(SHORT).describe("Session title"),
-      accomplished: z.string().max(MAX_TEXT).describe("What was accomplished"),
+      title: z.string().min(1).max(SHORT).optional().describe("Session title (optional: derived from accomplished when omitted)"),
+      accomplished: z.string().max(MAX_TEXT).optional().describe("What was accomplished (alias: summary)"),
+      summary: z.string().max(MAX_TEXT).optional().describe("Alias of accomplished, for agents behind wrappers that hide the schema"),
       // Optional so a summary is never lost to a missing field. Agents often omit these.
       learned: z.string().max(MAX_TEXT).optional().describe("What was learned (optional)"),
       decisions: z.string().max(MAX_TEXT).optional().describe("Key decisions made (optional)"),
       next_steps: z.string().max(MAX_TEXT).optional().describe("Next steps for future agents (optional)"),
     },
-    ({ title, accomplished: acc, learned: l = "", decisions: dec = "", next_steps: next = "" }) => {
-      const accomplished = redact(clip(acc, CAP.accomplished));
+    ({ title: t, accomplished: acc, summary, learned: l = "", decisions: dec = "", next_steps: next = "" }) => {
+      const raw = acc ?? summary;
+      if (!raw || !raw.trim()) {
+        return fail(`ERROR: save_summary needs at least accomplished (what was done). Expected {"accomplished": "..."} with optional title, learned, decisions, next_steps.`);
+      }
+      const accomplished = redact(clip(raw, CAP.accomplished));
+      // A missing title must never lose the summary: derive one from the first line of accomplished.
+      const title = (t ?? "").trim() || accomplished.split("\n")[0].slice(0, 80) || "Session summary";
       const learned = redact(clip(l, CAP.notes));
       const decisions = redact(clip(dec, CAP.notes));
       const next_steps = redact(clip(next, CAP.notes));
