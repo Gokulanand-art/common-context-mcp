@@ -70,6 +70,7 @@ What an agent does in a session:
 3. `save_failure`, then `search_context` — the moment something breaks
 4. `claim_area` / `release_area` — around edits to shared files
 5. `save_context`, then `save_summary` — before the final answer
+6. On a greeting with no task — brief what's in progress and next, ask what's on their mind
 
 ---
 
@@ -84,6 +85,7 @@ The server sends these instructions to every connected agent. Follow them in ord
 | 3 | **Record failures** | `save_failure` → `search_context` | Immediately on error, then search before any alternative |
 | 4 | **Claim files** | `claim_area` → `release_area` | Before/after editing a shared file — avoids collisions |
 | 5 | **Summarize** | `save_summary` | Before your final answer — marks the session complete |
+| 6 | **Greet** | `load_context` | On a greeting with no task — brief in-progress work and next steps, ask what's on their mind |
 
 ---
 
@@ -92,7 +94,7 @@ The server sends these instructions to every connected agent. Follow them in ord
 | Tool | Purpose | Read-only |
 |:---|:---|:---:|
 | `load_context` | Start a session; load shared state, recent sessions, failures, interrupted work | |
-| `save_context` | Save a fact/decision/config under a key; overwrites keep history | |
+| `save_context` | Save a fact/decision/config under a key (`key`/`value`; accepts `entry`/`name` and `content`/`text` aliases); overwrites keep history | |
 | `save_summary` | Close session with title, accomplished, learned, decisions, next steps (title auto-derived when omitted) | |
 | `save_failure` | Record a failed approach and why, so future agents see it | |
 | `record_success` | Record an approach that worked, so it's preferred next time | |

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.11.0
 
 - **Wrapper-proof saves**: `save_context` now accepts alias arguments (`entry`/`name` for `key`, `content`/`text` for `value`), and `save_summary` derives a title from `accomplished` when `title` is omitted (plus a `summary` alias). Agents behind generic wrappers that hide the tool schemas (e.g. OpenCode's `execute`) no longer fail with `Invalid arguments` for these guesses; genuinely empty calls still fail with a message that spells out the expected shape.
 - **Greeting resume**: the protocol (rules files, skill, server instructions, hook text) and the `load_context` output now tell the agent that on a greeting or message with no task, it should briefly summarize what is in progress and what is next, then ask what's on the user's mind. Switching agents mid-repo (Claude limit reached → OpenCode `hi`) now resumes with a briefing instead of a bare greeting.
